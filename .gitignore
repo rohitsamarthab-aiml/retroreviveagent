@@ -1,0 +1,36 @@
+# Environments and Virtualenv
+.venv/
+env/
+venv/
+ENV/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local backups and checkpoints
+checkpoint_baseline/
+checkpoint_ui_pre_fix/
+checkpoint_final_quality_upgrade/
+checkpoint_release_audit/
+checkpoint_platform/
+*.bak
+
+# Game runtime save data
+retrorevive_save.json
+accounts.json
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Distribution and builds
+dist/
+build/
+*.egg-info/
+
+# Operating system artifacts
+.DS_Store
+Thumbs.db

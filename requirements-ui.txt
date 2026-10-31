@@ -1,0 +1,3 @@
+# RetroRevive UI Dependencies
+# Graphical Desktop Frontend (Pygame)
+pygame==2.6.1

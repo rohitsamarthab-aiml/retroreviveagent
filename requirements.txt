@@ -1,0 +1,12 @@
+# RetroRevive — Python Dependencies
+# Tested on Python 3.14.0 (Windows 64-bit)
+# Install with: pip install -r requirements.txt
+
+# Graphical Desktop Frontend — pygame Community Edition
+# pygame-ce 2.5.8 ships pre-built wheels for Python 3.14 (cp314-cp314-win_amd64)
+# IMPORTANT: Do NOT install both pygame and pygame-ce in the same environment.
+pygame-ce==2.5.8
+
+# Testing Framework
+pytest>=9.0
+
