@@ -61,6 +61,8 @@ from ui_military import MilitaryDashboard
 from ui_agriculture import AgriculturalDashboard
 from ui_video_creator import VideoCreatorPanel
 from ui_day_night import DayNightRenderer
+from royal_governor import RoyalGovernor
+from ui_royal_governor import RoyalGovernorDashboard
 
 
 BASE_WIDTH = 1280
@@ -115,6 +117,16 @@ class GameApp:
         self.military_dashboard = MilitaryDashboard(screen_w=BASE_WIDTH, screen_h=BASE_HEIGHT, on_return=self._return_to_main_menu)
         self.agriculture_dashboard = AgriculturalDashboard(on_return=self._return_to_main_menu)
         self.video_creator = VideoCreatorPanel(on_return=self._return_to_main_menu)
+
+        # AI Royal Governor Autonomous Agent
+        initial_enhanced = init_enhanced_game(mode="ENHANCED")
+        self.royal_governor = RoyalGovernor(initial_enhanced)
+        self.governor_dashboard = RoyalGovernorDashboard(
+            governor=self.royal_governor,
+            on_return=self._return_from_governor,
+            screen_w=BASE_WIDTH,
+            screen_h=BASE_HEIGHT,
+        )
 
         # Authentication & Profile Manager
         self.auth = auth or AuthManager()
@@ -213,6 +225,7 @@ class GameApp:
 
         # In-Game Header Buttons (Top-Right)
         uname = self.auth.get_current_username()
+        self.btn_governor = UIButton((430, 14, 170, 36), "⚖ ROYAL GOVERNOR", self._open_governor_screen, font_size=12, color_scheme="gold")
         self.btn_profile = UIButton((710, 14, 135, 36), f"RULER: {uname[:10]}", self._open_profile_modal, font_size=13, color_scheme="gold")
         self.btn_save = UIButton((855, 14, 90, 36), "SAVES", lambda: self._open_save_slots_modal("SAVE"), font_size=14, color_scheme="lapis")
         self.btn_toggle_view = UIButton((955, 14, 115, 36), "PANORAMA", self._toggle_command_deck, font_size=13)
@@ -255,6 +268,7 @@ class GameApp:
                 UIButton((bx, start_y + spacing * 5, 380, btn_h), quit_label, self.quit, color_scheme="crimson"),
             ]
 
+        self.btn_menu_governor = UIButton((960, 385, 270, 40), "⚖ ROYAL GOVERNOR (AI)", self._open_governor_screen, font_size=13, color_scheme="gold")
         self.btn_watch_prologue = UIButton((960, 435, 270, 40), "WATCH ROYAL PROLOGUE", self.cinematics.trigger_prologue, primary=True)
         self.btn_military = UIButton((960, 485, 270, 40), "⚔️ MILITARY COMMAND", self._open_military_screen, color_scheme="crimson")
         self.btn_agriculture = UIButton((960, 535, 270, 40), "🌾 AGRICULTURAL MINISTRY", self._open_agriculture_screen, color_scheme="gold")
@@ -262,6 +276,31 @@ class GameApp:
         # Top header auth buttons for main menu
         self.btn_menu_profile = UIButton((960, 20, 280, 40), f"SOVEREIGN: {self.auth.get_current_username()[:16]}", self._open_profile_modal, font_size=13, color_scheme="gold")
         self.btn_menu_saves = UIButton((660, 20, 280, 40), "MULTI-SLOT SAVES", lambda: self._open_save_slots_modal("LOAD"), font_size=13, color_scheme="lapis")
+
+    def _open_governor_screen(self) -> None:
+        self.active_modal = None
+        self.active_toast = None
+        # Synchronize game state with Royal Governor
+        if self.enhanced_state is None:
+            if self.classic_state is not None:
+                self.enhanced_state = EnhancedGameState(classic_state=self.classic_state, mode="ENHANCED")
+            else:
+                self.enhanced_state = init_enhanced_game(mode="ENHANCED")
+        self.royal_governor.current_enhanced_state = self.enhanced_state
+        self.current_screen = "ROYAL_GOVERNOR"
+        SoundSynthesizer.play("chime")
+
+    def _return_from_governor(self) -> None:
+        # Pull live updated state back from Royal Governor
+        self.enhanced_state = self.royal_governor.current_enhanced_state
+        self.classic_state = self.enhanced_state.classic_state
+        self._reset_turn_inputs_for_new_turn()
+        if self.active_mode in ("CLASSIC", "ENHANCED", "SCENARIOS") and not self.classic_state.is_over:
+            self.current_screen = "GAMEPLAY"
+        elif self.classic_state.is_over:
+            self._on_term_completed()
+        else:
+            self.current_screen = "MAIN_MENU"
 
     def _open_military_screen(self) -> None:
         self.active_modal = None
@@ -1029,6 +1068,8 @@ class GameApp:
             self.agriculture_dashboard.handle_event(event, canvas_mouse)
         elif self.current_screen == "VIDEO_CREATOR":
             self.video_creator.handle_event(event, canvas_mouse)
+        elif self.current_screen == "ROYAL_GOVERNOR":
+            self.governor_dashboard.handle_event(event, canvas_mouse)
 
     def _handle_menu_events(self, event: pygame.event.Event, mouse_pos: Tuple[int, int]) -> None:
         if event.type == pygame.KEYDOWN:
@@ -1075,6 +1116,8 @@ class GameApp:
         if hasattr(self, "btn_menu_saves") and self.btn_menu_saves.handle_event(event, mouse_pos):
             return
 
+        if hasattr(self, "btn_menu_governor") and self.btn_menu_governor.handle_event(event, mouse_pos):
+            return
         if hasattr(self, "btn_watch_prologue") and self.btn_watch_prologue.handle_event(event, mouse_pos):
             return
         if hasattr(self, "btn_military") and self.btn_military.handle_event(event, mouse_pos):
@@ -1089,6 +1132,8 @@ class GameApp:
 
     def _handle_gameplay_events(self, event: pygame.event.Event, mouse_pos: Tuple[int, int]) -> None:
         # In-Game Header Buttons
+        if hasattr(self, "btn_governor") and self.btn_governor.handle_event(event, mouse_pos):
+            return
         if hasattr(self, "btn_profile") and self.btn_profile.handle_event(event, mouse_pos):
             return
         if hasattr(self, "btn_save") and self.btn_save.handle_event(event, mouse_pos):
@@ -1306,6 +1351,8 @@ class GameApp:
             self.agriculture_dashboard.update(dt, st)
         elif self.current_screen == "VIDEO_CREATOR" and hasattr(self, "video_creator"):
             self.video_creator.update(dt)
+        elif self.current_screen == "ROYAL_GOVERNOR" and hasattr(self, "governor_dashboard"):
+            self.governor_dashboard.update(dt)
 
     def draw(self) -> None:
         # Render active screen onto logical 1280x720 canvas
@@ -1325,6 +1372,8 @@ class GameApp:
             self.agriculture_dashboard.draw(self.canvas, self._get_current_game_state())
         elif self.current_screen == "VIDEO_CREATOR" and hasattr(self, "video_creator"):
             self.video_creator.draw(self.canvas, self._get_current_game_state())
+        elif self.current_screen == "ROYAL_GOVERNOR" and hasattr(self, "governor_dashboard"):
+            self.governor_dashboard.draw(self.canvas)
 
         # Modal dialogs
         if self.active_modal:
@@ -1486,6 +1535,8 @@ class GameApp:
             qy += 22
 
         # Action Buttons on Right Stele
+        if hasattr(self, "btn_menu_governor"):
+            self.btn_menu_governor.draw(self.canvas)
         if hasattr(self, "btn_watch_prologue"):
             self.btn_watch_prologue.draw(self.canvas)
         if hasattr(self, "btn_military"):
@@ -1557,7 +1608,10 @@ class GameApp:
         stat_surf = FontManager.body(15).render(hud_stat, True, Palette.TEXT_BODY)
         self.canvas.blit(stat_surf, (stat_x, 21))
 
-        # In-game buttons (Profile, Saves, Panorama View, Pause Menu, Goals)
+        # In-game buttons (Governor, Profile, Saves, Panorama View, Pause Menu, Goals)
+        if hasattr(self, "btn_governor"):
+            self.btn_governor.rect = pygame.Rect(545, 14, 165, 36)
+            self.btn_governor.draw(self.canvas)
         if hasattr(self, "btn_profile"):
             self.btn_profile.rect = pygame.Rect(720, 14, 130, 36)
             self.btn_profile.draw(self.canvas)

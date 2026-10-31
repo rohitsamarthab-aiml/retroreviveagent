@@ -328,10 +328,15 @@ def main() -> None:
         help="Launch 23 Matches directly",
     )
     parser.add_argument(
-        "--3d",
-        dest="run_3d",
+        "--screen",
+        choices=["main", "gameplay", "governor", "military", "agriculture", "video_creator"],
+        default=None,
+        help="Launch directly into a specific ministry or dashboard",
+    )
+    parser.add_argument(
+        "--governor",
         action="store_true",
-        help="Launch the realistic 3D ancient Babylonian kingdom experience (Panda3D)",
+        help="Launch directly into the AI Royal Governor autonomous agent",
     )
     parser.add_argument(
         "--fullscreen",
@@ -402,12 +407,6 @@ def main() -> None:
         or args.speed != "normal"
     )
 
-    # 0. Check for 3D Experience Launch
-    if getattr(args, "run_3d", False):
-        from main_3d import main as run_3d_main
-        run_3d_main()
-        return
-
     # 1. Try launching Pygame Graphical Interface unless CLI is forced
     if not cli_flags_present:
         try:
@@ -418,9 +417,17 @@ def main() -> None:
                 app = matches_app.MatchesApp(start_fullscreen=args.fullscreen)
                 app.run()
                 return
-            elif args.hammurabi:
+            elif args.hammurabi or args.governor or args.screen:
                 from ui_pygame import GameApp
                 app = GameApp(start_fullscreen=args.fullscreen, show_auth_modal=show_auth)
+                if args.governor or args.screen == "governor":
+                    app._open_governor_screen()
+                elif args.screen == "military":
+                    app._open_military_screen()
+                elif args.screen == "agriculture":
+                    app._open_agriculture_screen()
+                elif args.screen == "video_creator":
+                    app._open_video_creator_screen()
                 app.run()
                 return
             else:

@@ -386,29 +386,32 @@ class LauncherMenu:
         # Buttons
         btn_cx = SCREEN_W // 2
         btn_w  = 360
-        btn_h  = 58
-        gap    = 20
-        start_y = 400
+        btn_h  = 48
+        gap    = 12
+        start_y = 360
 
         self._buttons = [
             _Button("Rule the Kingdom",        (btn_cx - btn_w // 2, start_y, btn_w, btn_h),
                     icon="👑", color_bg=ROYAL_NAVY),
-            _Button("Watch Cinematic Intro",   (btn_cx - btn_w // 2, start_y + btn_h + gap, btn_w, btn_h),
+            _Button("AI Royal Governor",       (btn_cx - btn_w // 2, start_y + btn_h + gap, btn_w, btn_h),
+                    icon="⚖", color_bg=(25, 45, 80)),
+            _Button("Watch Cinematic Intro",   (btn_cx - btn_w // 2, start_y + 2 * (btn_h + gap), btn_w, btn_h),
                     icon="🎬", color_bg=(55, 25, 15)),
-            _Button("Military Command",        (btn_cx - btn_w // 2, start_y + 2 * (btn_h + gap), btn_w, btn_h),
+            _Button("Military Command",        (btn_cx - btn_w // 2, start_y + 3 * (btn_h + gap), btn_w, btn_h),
                     icon="⚔", color_bg=(45, 20, 20)),
-            _Button("Agricultural Ministry",   (btn_cx - btn_w // 2, start_y + 3 * (btn_h + gap), btn_w, btn_h),
+            _Button("Agricultural Ministry",   (btn_cx - btn_w // 2, start_y + 4 * (btn_h + gap), btn_w, btn_h),
                     icon="🌾", color_bg=(20, 45, 20)),
-            _Button("Quit",                    (btn_cx - btn_w // 2, start_y + 4 * (btn_h + gap), btn_w, btn_h // 2 + 4),
+            _Button("Quit",                    (btn_cx - btn_w // 2, start_y + 5 * (btn_h + gap), btn_w, btn_h // 2 + 4),
                     icon="✕", color_bg=(40, 15, 15), color_border=SANDSTONE_DARK,
                     color_text=SANDSTONE, font_size=16),
         ]
         self._action_map = {
             self._buttons[0]: "play",
-            self._buttons[1]: "cinematic",
-            self._buttons[2]: "military",
-            self._buttons[3]: "agriculture",
-            self._buttons[4]: "quit",
+            self._buttons[1]: "governor",
+            self._buttons[2]: "cinematic",
+            self._buttons[3]: "military",
+            self._buttons[4]: "agriculture",
+            self._buttons[5]: "quit",
         }
 
     @staticmethod
@@ -571,6 +574,8 @@ def launch() -> None:
 
     if choice == "play":
         subprocess.Popen([python, str(root / "main.py")])
+    elif choice == "governor":
+        subprocess.Popen([python, str(root / "main.py"), "--screen", "governor"])
     elif choice == "cinematic":
         # Play the AI cinematic video if available
         video_path = Path(
