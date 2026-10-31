@@ -59,6 +59,9 @@ from engine3d.camera_system import CameraController3D, PRESETS
 from engine3d.cinematics_3d import CinematicDirector3D
 from engine3d.entities_3d import EntitiesManager3D
 from engine3d.hammurabi_model import RoyalCourtScene3D
+from engine3d.texture_manager import TextureManager
+from engine3d.sky_dome import SkyDome
+from engine3d.vegetation_3d import VegetationManager
 
 
 # Premium Royal Babylonian UI Color Scheme
@@ -97,11 +100,39 @@ class BabylonApp3D(ShowBase):
         if not headless and hasattr(self, "win") and self.win:
             self.render.set_antialias(AntialiasAttrib.MAuto)
 
+        # 0. Preload all procedural textures (sandstone, lapis, marble, etc.)
+        self._texture_manager = TextureManager.instance()
+        try:
+            self._texture_manager.preload_all()
+        except Exception:
+            pass  # graceful fallback if PIL unavailable
+
         # 1. 3D Lighting & Atmosphere
         self.atmosphere = Atmosphere3D(self.render)
 
+        # 1b. Sky dome with golden-hour gradient + clouds
+        self._sky_dome: "SkyDome | None" = None
+        if not headless:
+            try:
+                self._sky_dome = SkyDome(self.render)
+            except Exception:
+                pass
+
         # 2. 3D Architectural Metropolis
         self.world = BabylonWorld3D(self.render)
+        # Apply procedural textures to all geometry
+        try:
+            self.world.apply_textures()
+        except Exception:
+            pass
+
+        # 2b. Palm trees & vegetation matching reference images
+        self._vegetation: "VegetationManager | None" = None
+        try:
+            self._vegetation = VegetationManager(self.render)
+            self._vegetation.setup_babylon_vegetation()
+        except Exception:
+            pass
 
         # 3. 3D Royal Court with King Hammurabi on Lion Throne
         self.court = RoyalCourtScene3D(self.render, pos=Vec3(75.0, 75.0, 0))
@@ -379,6 +410,13 @@ class BabylonApp3D(ShowBase):
         self.entities.update(dt)
         self.camera_ctrl.update(dt)
         self.cinematics.update(dt)
+
+        # Update sky dome clouds + sun position
+        if self._sky_dome is not None:
+            try:
+                self._sky_dome.update(dt)
+            except Exception:
+                pass
 
         # Toast fade
         if self.toast_timer > 0:

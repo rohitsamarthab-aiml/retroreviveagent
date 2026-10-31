@@ -485,3 +485,50 @@ class BabylonWorld3D:
             getattr(state, "harvest_yield", 3),
         )
 
+    def apply_textures(self) -> None:
+        """
+        Apply procedural textures to major world geometry after the TextureManager
+        has been preloaded. Safe to call even if TextureManager is unavailable.
+        """
+        try:
+            from engine3d.texture_manager import TextureManager
+            tm = TextureManager.instance()
+        except Exception:
+            return
+
+        def _tex(np_node, name):
+            try:
+                t = tm.get(name)
+                if t:
+                    np_node.set_texture(t)
+            except Exception:
+                pass
+
+        # Ziggurat — sandstone tiers
+        if hasattr(self, "ziggurat"):
+            _tex(self.ziggurat.root, "sandstone_brick")
+
+        # Ishtar Gate — lapis glazed tiles
+        if hasattr(self, "ishtar_gate"):
+            _tex(self.ishtar_gate.root, "lapis_glazed")
+
+        # Palace — sandstone
+        if hasattr(self, "palace"):
+            _tex(self.palace.root, "sandstone_brick")
+
+        # River — water caustics
+        if hasattr(self, "river"):
+            _tex(self.river.root, "water_caustics")
+
+        # Farmlands — wheat field
+        if hasattr(self, "farmlands"):
+            _tex(self.farmlands.root, "wheat_field")
+
+        # City walls — mudbrick
+        if hasattr(self, "walls"):
+            _tex(self.walls.root, "mudbrick")
+
+        # Ground terrain — stone pavement
+        if hasattr(self, "_ground") and self._ground is not None:
+            _tex(self._ground, "stone_pavement")
+
