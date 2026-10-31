@@ -10,3 +10,7 @@ pygame-ce==2.5.8
 # Testing Framework
 pytest>=9.0
 
+# 3D Hardware Accelerated Game Engine — Panda3D
+# Panda3D 1.10.16 ships pre-built wheels for Python 3.14 (cp314-cp314-win_amd64)
+panda3d>=1.10.16
+

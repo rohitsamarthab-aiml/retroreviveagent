@@ -93,7 +93,7 @@ echo.
 echo  Running verification tests...
 set SDL_VIDEODRIVER=dummy
 set SDL_AUDIODRIVER=dummy
-python -m pytest test_game.py test_modern.py test_auth.py test_ui.py test_platform.py "games\23_matches\test_engine.py" -q
+python -m pytest -q
 if %ERRORLEVEL% NEQ 0 (
     echo  [WARNING] Some tests failed. The game may still run. Check output above.
 ) else (

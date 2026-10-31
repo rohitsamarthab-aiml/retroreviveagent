@@ -328,6 +328,12 @@ def main() -> None:
         help="Launch 23 Matches directly",
     )
     parser.add_argument(
+        "--3d",
+        dest="run_3d",
+        action="store_true",
+        help="Launch the realistic 3D ancient Babylonian kingdom experience (Panda3D)",
+    )
+    parser.add_argument(
         "--fullscreen",
         action="store_true",
         help="Launch desktop interface in fullscreen mode",
@@ -395,6 +401,12 @@ def main() -> None:
         or args.color != "auto"
         or args.speed != "normal"
     )
+
+    # 0. Check for 3D Experience Launch
+    if getattr(args, "run_3d", False):
+        from main_3d import main as run_3d_main
+        run_3d_main()
+        return
 
     # 1. Try launching Pygame Graphical Interface unless CLI is forced
     if not cli_flags_present:
