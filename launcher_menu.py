@@ -351,7 +351,7 @@ class LauncherMenu:
     """
     Full-screen launcher menu for RetroRevive: Hammurabi's Living Empire.
 
-    Returns one of: '3d', '2d', 'cinematic', 'quit'
+    Returns one of: 'play', 'cinematic', 'quit'
     """
 
     def __init__(self) -> None:
@@ -385,27 +385,30 @@ class LauncherMenu:
 
         # Buttons
         btn_cx = SCREEN_W // 2
-        btn_w  = 340
-        btn_h  = 56
-        gap    = 18
-        start_y = 410
+        btn_w  = 360
+        btn_h  = 58
+        gap    = 20
+        start_y = 400
 
         self._buttons = [
-            _Button("Enter the 3D Kingdom",  (btn_cx - btn_w // 2, start_y, btn_w, btn_h),
-                    icon="🏛", color_bg=ROYAL_NAVY),
-            _Button("Classic 2D Mode",        (btn_cx - btn_w // 2, start_y + btn_h + gap, btn_w, btn_h),
-                    icon="📜", color_bg=(30, 55, 30)),
-            _Button("Watch Cinematic Intro",  (btn_cx - btn_w // 2, start_y + 2 * (btn_h + gap), btn_w, btn_h),
+            _Button("Rule the Kingdom",        (btn_cx - btn_w // 2, start_y, btn_w, btn_h),
+                    icon="👑", color_bg=ROYAL_NAVY),
+            _Button("Watch Cinematic Intro",   (btn_cx - btn_w // 2, start_y + btn_h + gap, btn_w, btn_h),
                     icon="🎬", color_bg=(55, 25, 15)),
-            _Button("Quit",                   (btn_cx - btn_w // 2, start_y + 3 * (btn_h + gap), btn_w, btn_h // 2 + 4),
+            _Button("Military Command",        (btn_cx - btn_w // 2, start_y + 2 * (btn_h + gap), btn_w, btn_h),
+                    icon="⚔", color_bg=(45, 20, 20)),
+            _Button("Agricultural Ministry",   (btn_cx - btn_w // 2, start_y + 3 * (btn_h + gap), btn_w, btn_h),
+                    icon="🌾", color_bg=(20, 45, 20)),
+            _Button("Quit",                    (btn_cx - btn_w // 2, start_y + 4 * (btn_h + gap), btn_w, btn_h // 2 + 4),
                     icon="✕", color_bg=(40, 15, 15), color_border=SANDSTONE_DARK,
                     color_text=SANDSTONE, font_size=16),
         ]
         self._action_map = {
-            self._buttons[0]: "3d",
-            self._buttons[1]: "2d",
-            self._buttons[2]: "cinematic",
-            self._buttons[3]: "quit",
+            self._buttons[0]: "play",
+            self._buttons[1]: "cinematic",
+            self._buttons[2]: "military",
+            self._buttons[3]: "agriculture",
+            self._buttons[4]: "quit",
         }
 
     @staticmethod
@@ -493,7 +496,7 @@ class LauncherMenu:
         self._btn_alpha = min(target_alpha, self._btn_alpha + 180 * dt)
 
     def run(self) -> str:
-        """Run the launcher event loop. Returns one of: '3d', '2d', 'cinematic', 'quit'."""
+        """Run the launcher event loop. Returns one of: 'play', 'cinematic', 'military', 'agriculture', 'quit'."""
         running = True
         result  = "quit"
 
@@ -511,7 +514,7 @@ class LauncherMenu:
                     if event.key == pygame.K_ESCAPE:
                         running = False
                     elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        result = "3d"
+                        result = "play"
                         running = False
 
                 for btn in self._buttons:
@@ -531,7 +534,6 @@ class LauncherMenu:
             # Translucent dark overlay over lower half for readability
             overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
             overlay.fill((5, 8, 25, 175))
-            # Reveal from bottom upward so city shows at top
             self._screen.blit(overlay, (0, SCREEN_H // 3))
 
             self._draw_animated_border(self._screen)
@@ -564,24 +566,25 @@ def launch() -> None:
     menu = LauncherMenu()
     choice = menu.run()
 
-    root = Path(__file__).parent
+    root   = Path(__file__).parent
     python = sys.executable
 
-    if choice == "3d":
-        subprocess.Popen([python, str(root / "main_3d.py"), "--quality", "HIGH"])
-    elif choice == "2d":
+    if choice == "play":
         subprocess.Popen([python, str(root / "main.py")])
     elif choice == "cinematic":
-        # Play the uploaded AI cinematic video if available, or the 2D cinematic mode
+        # Play the AI cinematic video if available
         video_path = Path(
             r"C:\Users\rohit\.gemini\antigravity\brain\6f39ef59-d107-4ba7-b334-74f65f2f80f8"
             r"\.user_uploaded\media_1793461843017_d5e8c805.mp4"
         )
         if video_path.exists():
-            # Try to open with system player
             os.startfile(str(video_path))
         else:
             subprocess.Popen([python, str(root / "main.py"), "--cinematic"])
+    elif choice == "military":
+        subprocess.Popen([python, str(root / "main.py"), "--screen", "military"])
+    elif choice == "agriculture":
+        subprocess.Popen([python, str(root / "main.py"), "--screen", "agriculture"])
     elif choice == "quit":
         pass
 

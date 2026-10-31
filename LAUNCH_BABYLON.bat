@@ -23,14 +23,13 @@ if exist ".venv\Scripts\activate.bat" (
     exit /b 1
 )
 
-:: Launch the cinematic menu
+:: Launch the cinematic Babylon menu
 python launcher_menu.py
 
 if errorlevel 1 (
     echo.
-    echo  [ERROR] Launcher failed. Trying direct 3D mode...
-    python main_3d.py --quality HIGH
+    echo  [INFO] Launching classic mode directly...
+    python main.py
 )
 
 pause
-
