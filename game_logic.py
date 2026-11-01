@@ -44,7 +44,7 @@ class MockRNG:
 
 @dataclass(frozen=True)
 class GameState:
-    \"\"\"Immutable snapshot of the Hammurabi simulation state.\"\"\"
+    """Immutable snapshot of the Hammurabi simulation state."""
 
     year: int  # Z: 1 to 10 during play; 11 triggers term end
     population: int  # P: Current living citizens
@@ -61,7 +61,7 @@ class GameState:
     plague_next_year: bool  # Whether a plague was rolled to strike next year
     is_over: bool  # True if the game reached any ending
     game_over_reason: Optional[str] = None  # "STEWARD_FIRED", "IMPEACHED", "COMPLETED"
-    
+
     # --- Multi-Kingdom & Military Expansion ---
     soldiers: int = 0
     military_strength: int = 0  # Combat rating
@@ -72,13 +72,13 @@ class GameState:
 
 @dataclass(frozen=True)
 class TurnDecisions:
-    \"\"\"Player decisions submitted for a single year.\"\"\"
+    """Player decisions submitted for a single year."""
 
     buy_acres: int = 0
     sell_acres: int = 0
     feed_bushels: int = 0
     plant_acres: int = 0
-    
+
     # --- Expansion Decisions ---
     recruit_soldiers: int = 0
     train_soldiers_cost: int = 0
@@ -87,7 +87,7 @@ class TurnDecisions:
 
 @dataclass(frozen=True)
 class ValidationResult:
-    \"\"\"Result of checking a player order against game constraints.\"\"\"
+    """Result of checking a player order against game constraints."""
 
     is_valid: bool
     is_fatal: bool = False
@@ -96,7 +96,7 @@ class ValidationResult:
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    \"\"\"Final performance review after 10 years of governing.\"\"\"
+    """Final performance review after 10 years of governing."""
 
     tier: int  # 1: Fink, 2: Nero/Ivan, 3: Mediocre, 4: Fantastic
     acres_per_person: float  # L = A / P
@@ -106,10 +106,10 @@ class EvaluationResult:
 
 
 def calculate_land_price(rng: RandomProvider) -> int:
-    \"\"\"
+    """
     Calculates land price for the year: INT(10 * RND(1)) + 17 (lines 310-312).
     Returns an integer from 17 to 26 inclusive.
-    \"\"\"
+    """
     c = math.floor(10.0 * rng())
     return c + 17
 
@@ -118,12 +118,12 @@ def init_game(
     rng: Optional[RandomProvider] = None,
     strict_historical: bool = True,
 ) -> GameState:
-    \"\"\"
+    """
     Initializes the game to Year 1 pre-decision state.
     Matches lines 95-110 and lines 215-260 of the 1978 BASIC listing:
       - Z = 1, P = 100 (95 + 5), S = 2800, A = 1000, Y = 3, E = 200, I = 5, D = 0.
       - Generates Year 1 land price using rng.
-    \"\"\"
+    """
     provider = rng if rng is not None else DefaultRNG()
     price = calculate_land_price(provider)
 
@@ -143,32 +143,32 @@ def init_game(
         plague_next_year=False,
         is_over=False,
         game_over_reason=None,
-        soldiers=20,
-        military_strength=100,
-        treasury_gold=500,
-        defense_level=1,
+        soldiers=0,
+        military_strength=0,
+        treasury_gold=0,
+        defense_level=0,
         territory_influence=1.0,
     )
 
 
 def validate_buy_land(state: GameState, acres: int) -> ValidationResult:
-    \"\"\"
+    """
     Validates land purchase (lines 321-324).
     - acres < 0: steward fired immediately (fatal).
     - acres * land_price > bushels: cannot afford.
-    \"\"\"
+    """
     if acres < 0:
         return ValidationResult(
             is_valid=False,
             is_fatal=True,
-            message=\"HAMURABI:  I CANNOT DO WHAT YOU WISH.\\nGET YOURSELF ANOTHER STEWARD!!!!!\",
+            message="HAMURABI:  I CANNOT DO WHAT YOU WISH.\nGET YOURSELF ANOTHER STEWARD!!!!!",
         )
     cost = acres * state.land_price
     if cost > state.bushels:
         return ValidationResult(
             is_valid=False,
             is_fatal=False,
-            message=f\"HAMURABI:  THINK AGAIN.  YOU HAVE ONLY\\n{state.bushels} BUSHELS OF GRAIN.  NOW THEN,\",
+            message=f"HAMURABI:  THINK AGAIN.  YOU HAVE ONLY\n{state.bushels} BUSHELS OF GRAIN.  NOW THEN,",
         )
     return ValidationResult(is_valid=True)
 
@@ -178,88 +178,104 @@ def validate_sell_land(
     acres: int,
     strict_historical: bool = True,
 ) -> ValidationResult:
-    \"\"\"
+    """
     Validates land sale (lines 341-344).
     - acres < 0: steward fired immediately (fatal).
     - strict_historical=True (line 342: IF Q < A): acres >= state.acres rejected.
     - strict_historical=False: acres > state.acres rejected (permits selling all).
-    \"\"\"
+    """
     if acres < 0:
         return ValidationResult(
             is_valid=False,
             is_fatal=True,
-            message=\"HAMURABI:  I CANNOT DO WHAT YOU WISH.\\nGET YOURSELF ANOTHER STEWARD!!!!!\",
+            message="HAMURABI:  I CANNOT DO WHAT YOU WISH.\nGET YOURSELF ANOTHER STEWARD!!!!!",
         )
     if strict_historical:
         if acres >= state.acres:
             return ValidationResult(
                 is_valid=False,
                 is_fatal=False,
-                message=f\"HAMURABI:  THINK AGAIN.  YOU OWN ONLY {state.acres} ACRES.  NOW THEN,\",
+                message=f"HAMURABI:  THINK AGAIN.  YOU OWN ONLY {state.acres} ACRES.  NOW THEN,",
             )
     else:
         if acres > state.acres:
             return ValidationResult(
                 is_valid=False,
                 is_fatal=False,
-                message=f\"HAMURABI:  THINK AGAIN.  YOU OWN ONLY {state.acres} ACRES.  NOW THEN,\",
+                message=f"HAMURABI:  THINK AGAIN.  YOU OWN ONLY {state.acres} ACRES.  NOW THEN,",
             )
     return ValidationResult(is_valid=True)
 
 
 def validate_feed_people(state: GameState, bushels: int) -> ValidationResult:
-    \"\"\"
-    Validates grain allocation to citizens (lines 411-412).
-    - bushels < 0: fatal.
-    - bushels > silos: cannot afford.
-    \"\"\"
+    """
+    Validates grain allocated for food (lines 411-422).
+    - bushels < 0: steward fired immediately (fatal).
+    - bushels > state.bushels: cannot feed more grain than currently in store.
+    """
     if bushels < 0:
         return ValidationResult(
             is_valid=False,
             is_fatal=True,
-            message=\"HAMURABI:  I CANNOT DO WHAT YOU WISH.\\nGET YOURSELF ANOTHER STEWARD!!!!!\",
+            message="HAMURABI:  I CANNOT DO WHAT YOU WISH.\nGET YOURSELF ANOTHER STEWARD!!!!!",
         )
     if bushels > state.bushels:
         return ValidationResult(
             is_valid=False,
             is_fatal=False,
-            message=f\"HAMURABI:  THINK AGAIN.  YOU HAVE ONLY\\n{state.bushels} BUSHELS OF GRAIN.  NOW THEN,\",
+            message=f"HAMURABI:  THINK AGAIN.  YOU HAVE ONLY\n{state.bushels} BUSHELS OF GRAIN.  NOW THEN,",
         )
     return ValidationResult(is_valid=True)
 
 
-def validate_plant_seed(state: GameState, acres: int) -> ValidationResult:
-    \"\"\"
-    Validates seed planting (lines 441-447).
-    - acres < 0: fatal.
-    - acres > land owned: no space.
-    - acres > labor limit (10 acres/person): not enough workers.
-    - seed > silos (1 bushel / 2 acres): cannot afford.
-    \"\"\"
+def validate_plant_seed(
+    state: GameState,
+    acres: int,
+    available_grain: int,
+    strict_historical: bool = True,
+) -> ValidationResult:
+    """
+    Validates acreage planted with seed (lines 441-470).
+    - acres < 0: steward fired immediately (fatal).
+    - acres > state.acres: cannot plant more than owned.
+    - acres // 2 > available_grain: need 1 bushel for every 2 acres.
+    - strict_historical=True (line 455: IF D < 10 * P): acres >= 10 * population rejected.
+    - strict_historical=False: acres > 10 * population rejected.
+    """
     if acres < 0:
         return ValidationResult(
             is_valid=False,
             is_fatal=True,
-            message=\"HAMURABI:  I CANNOT DO WHAT YOU WISH.\\nGET YOURSELF ANOTHER STEWARD!!!!!\",
+            message="HAMURABI:  I CANNOT DO WHAT YOU WISH.\nGET YOURSELF ANOTHER STEWARD!!!!!",
         )
     if acres > state.acres:
         return ValidationResult(
             is_valid=False,
             is_fatal=False,
-            message=f\"HAMURABI:  THINK AGAIN.  YOU OWN ONLY {state.acres} ACRES.  NOW THEN,\",
+            message=f"HAMURABI:  THINK AGAIN.  YOU OWN ONLY {state.acres} ACRES.  NOW THEN,",
         )
-    if acres // 2 > state.bushels:
+    seed_required = acres // 2
+    if seed_required > available_grain:
         return ValidationResult(
             is_valid=False,
             is_fatal=False,
-            message=f\"HAMURABI:  THINK AGAIN.  YOU HAVE ONLY\\n{state.bushels} BUSHELS OF GRAIN.  NOW THEN,\",
+            message=f"HAMURABI:  THINK AGAIN.  YOU HAVE ONLY\n{available_grain} BUSHELS OF GRAIN.  NOW THEN,",
         )
-    if acres > 10 * state.population:
-        return ValidationResult(
-            is_valid=False,
-            is_fatal=False,
-            message=f\"BUT YOU HAVE ONLY {state.population} PEOPLE TO TEND THE FIELDS!  NOW THEN,\",
-        )
+    labor_limit = 10 * state.population
+    if strict_historical:
+        if acres >= labor_limit:
+            return ValidationResult(
+                is_valid=False,
+                is_fatal=False,
+                message=f"BUT YOU HAVE ONLY {state.population} PEOPLE TO TEND THE FIELDS!  NOW THEN,",
+            )
+    else:
+        if acres > labor_limit:
+            return ValidationResult(
+                is_valid=False,
+                is_fatal=False,
+                message=f"BUT YOU HAVE ONLY {state.population} PEOPLE TO TEND THE FIELDS!  NOW THEN,",
+            )
     return ValidationResult(is_valid=True)
 
 
@@ -267,152 +283,255 @@ def step_year(
     state: GameState,
     decisions: TurnDecisions,
     rng: Optional[RandomProvider] = None,
+    strict_historical: bool = True,
 ) -> GameState:
-    \"\"\"
-    Executes one turn of the simulation (lines 215-560).
-    Calculates harvest, immigration, plague, and rat destruction.
-    Returns the new immutable state for the start of the next year.
-    \"\"\"
+    """
+    Advances the simulation by one year applying player decisions and random events.
+    Matches lines 330-780 of the 1978 BASIC code:
+      1. Land transactions (buy or sell).
+      2. Deduct food grain.
+      3. Deduct seed grain (INT(D/2)).
+      4. Harvest roll: Y in [1..5], H = D * Y.
+      5. Rat roll: C in [1..5]; if even, E = INT(S / C); S = S - E + H.
+      6. Immigrants roll: C in [1..5]; I = INT(C * (20*A + S) / P / 100 + 1).
+      7. Starvation & 45% impeachment check.
+      8. Plague roll for next year: Q = INT(10 * (2 * RND(1) - 0.3)).
+      9. Advance year: Z = Z + 1, apply immigrants, apply plague if triggered.
+    """
     provider = rng if rng is not None else DefaultRNG()
 
-    # 1. Update resources from trade/feeding/planting
-    # Note: validation ensures these are safe
-    new_acres = state.acres + decisions.buy_acres - decisions.sell_acres
-    new_bushels = state.bushels - (decisions.buy_acres * state.land_price) + \\
-                  (decisions.sell_acres * state.land_price) - decisions.feed_bushels - \\
-                  (decisions.plant_acres // 2)
+    # Apply land transactions
+    current_acres = state.acres
+    current_bushels = state.bushels
 
-    # 2. Harvest results (lines 510-515)
-    harvest_yield = math.floor(5.0 * provider()) + 1
-    harvested = decisions.plant_acres * harvest_yield
+    if decisions.buy_acres > 0:
+        current_acres += decisions.buy_acres
+        current_bushels -= decisions.buy_acres * state.land_price
+    elif decisions.sell_acres > 0:
+        current_acres -= decisions.sell_acres
+        current_bushels += decisions.sell_acres * state.land_price
 
-    # 3. Rat destruction (lines 521-525)
-    rats_ate = 0
-    c = math.floor(5.0 * provider()) + 1
-    if math.floor(c / 2.0) == (c / 2.0):
-        rats_ate = math.floor(new_bushels / c)
-    new_bushels = new_bushels + harvested - rats_ate
+    # Deduct food
+    current_bushels -= decisions.feed_bushels
 
-    # 4. Immigration (lines 531-533)
-    c = math.floor(5.0 * provider()) + 1
-    immigrants = math.floor(c * (20 * new_acres + new_bushels) / state.population / 100.0) + 1
+    # Deduct seed grain: INT(D/2) (line 510)
+    seed_used = decisions.plant_acres // 2
+    current_bushels -= seed_used
 
-    # 5. Population and Starvation (lines 541-550)
-    # Each person needs 20 bushels to survive.
-    fed_people = decisions.feed_bushels // 20
-    starved = max(0, state.population - fed_people)
+    # Roll 2: Harvest yield Y = INT(RND(1) * 5) + 1 (lines 511, 800)
+    harvest_yield = math.floor(provider() * 5.0) + 1
+    harvest_total = decisions.plant_acres * harvest_yield
 
-    # Impeachment check: > 45% starved in one year
-    if starved > 0.45 * state.population:
-        return state.__class__(
-            year=state.year,
-            population=state.population - starved,
-            bushels=new_bushels,
-            acres=new_acres,
+    # Roll 3: Rats infestation (lines 521-530)
+    rat_roll = math.floor(provider() * 5.0) + 1
+    # Line 522: IF INT(C/2) <> C/2 THEN 530 (odd rolls skip rats)
+    if rat_roll % 2 == 0:
+        # Line 525: E = INT(S / C)
+        rats_ate = current_bushels // rat_roll
+    else:
+        rats_ate = 0
+
+    # Line 530: S = S - E + H (rats eat before harvest is added)
+    current_bushels = current_bushels - rats_ate + harvest_total
+
+    # Roll 4: Immigration (lines 531-533)
+    imm_roll = math.floor(provider() * 5.0) + 1
+    # Line 533: I = INT(C * (20 * A + S) / P / 100 + 1)
+    immigrants = math.floor(
+        (imm_roll * (20 * current_acres + current_bushels))
+        / (state.population * 100.0)
+        + 1.0
+    )
+
+    # Starvation calculation (lines 539-555)
+    # Line 540: C = INT(Q / 20) (each citizen needs 20 bushels)
+    full_tummies = decisions.feed_bushels // 20
+
+    # Roll 5: Plague chance for next year (line 542)
+    # Line 542: Q = INT(10 * (2 * RND(1) - 0.3))
+    plague_r = provider()
+    q_plague = math.floor(10.0 * (2.0 * plague_r - 0.3))
+    # Line 227 checks: IF Q > 0 THEN 230 (so Q <= 0 triggers plague)
+    plague_next_year = q_plague <= 0
+
+    # Check feeding outcome:
+    # Line 550: IF P < C THEN 210 (Overfeeding: skip starvation updates completely)
+    if state.population < full_tummies:
+        starved = 0
+        new_starved_total = state.starved_total
+        new_starved_pct_avg = state.starved_pct_avg
+        surviving_population = state.population
+    else:
+        # Line 552: D = P - C
+        starved = state.population - full_tummies
+
+        # Line 552: IF D > 0.45 * P THEN 560 (Impeachment)
+        if starved > 0.45 * state.population:
+            return GameState(
+                year=state.year,
+                population=state.population - starved,
+                bushels=current_bushels,
+                acres=current_acres,
+                land_price=state.land_price,
+                starved_this_year=starved,
+                starved_total=state.starved_total + starved,
+                starved_pct_avg=state.starved_pct_avg,
+                immigrants_this_year=immigrants,
+                harvest_yield=harvest_yield,
+                rats_ate=rats_ate,
+                plague_struck=False,
+                plague_next_year=plague_next_year,
+                is_over=True,
+                game_over_reason="IMPEACHED",
+                soldiers=getattr(state, "soldiers", 0),
+                military_strength=getattr(state, "military_strength", 0),
+                treasury_gold=getattr(state, "treasury_gold", 0),
+                defense_level=getattr(state, "defense_level", 0),
+                territory_influence=getattr(state, "territory_influence", 1.0),
+            )
+
+        # Line 553: P1 = ((Z - 1) * P1 + D * 100 / P) / Z
+        current_year_pct = (starved * 100.0) / state.population
+        new_starved_pct_avg = (
+            (state.year - 1) * state.starved_pct_avg + current_year_pct
+        ) / state.year
+        surviving_population = full_tummies
+        new_starved_total = state.starved_total + starved
+
+    # Advance to next year (lines 215-229)
+    next_year = state.year + 1
+    # Line 218: P = P + I
+    next_population = surviving_population + immigrants
+
+    # Line 227-229: Plague check from previous roll
+    plague_struck_this_turn = state.plague_next_year
+    if plague_struck_this_turn:
+        # Line 228: P = INT(P / 2)
+        next_population = next_population // 2
+
+    # Military & economy updates (backward-compatible)
+    recruits = getattr(decisions, "recruit_soldiers", 0)
+    train_cost = getattr(decisions, "train_soldiers_cost", 0)
+    forts = getattr(decisions, "buy_fortifications", 0)
+
+    current_soldiers = getattr(state, "soldiers", 0)
+    current_treasury = getattr(state, "treasury_gold", 0)
+    current_defense = getattr(state, "defense_level", 0)
+    territory_influence = getattr(state, "territory_influence", 1.0)
+
+    new_soldiers = current_soldiers + recruits
+    new_defense = current_defense + forts
+    new_treasury = current_treasury
+    if recruits > 0 or train_cost > 0 or forts > 0 or current_treasury > 0:
+        tax_revenue = math.floor(next_population * 2)
+        new_treasury = max(0, current_treasury + tax_revenue - train_cost - (forts * 50))
+    new_strength = int(new_soldiers * (1.0 + new_defense * 0.1)) if new_soldiers > 0 else 0
+
+    # Line 270: IF Z = 11 THEN 860
+    if next_year == 11:
+        return GameState(
+            year=11,
+            population=next_population,
+            bushels=current_bushels,
+            acres=current_acres,
             land_price=state.land_price,
             starved_this_year=starved,
-            starved_total=state.starved_total + starved,
-            starved_pct_avg=state.starved_pct_avg,
-            immigrants_this_year=0,
+            starved_total=new_starved_total,
+            starved_pct_avg=new_starved_pct_avg,
+            immigrants_this_year=immigrants,
             harvest_yield=harvest_yield,
             rats_ate=rats_ate,
-            plague_struck=False,
-            plague_next_year=False,
+            plague_struck=plague_struck_this_turn,
+            plague_next_year=plague_next_year,
             is_over=True,
-            game_over_reason=\"IMPEACHED\",
-            soldiers=state.soldiers,
-            military_strength=state.military_strength,
-            treasury_gold=state.treasury_gold,
-            defense_level=state.defense_level,
-            territory_influence=state.territory_influence
+            game_over_reason="COMPLETED",
+            soldiers=new_soldiers,
+            military_strength=new_strength,
+            treasury_gold=new_treasury,
+            defense_level=new_defense,
+            territory_influence=territory_influence,
         )
 
-    # 6. Plague check (lines 215-218)
-    plague_struck = False
-    new_pop = state.population - starved + immigrants
-    if provider() < 0.15:  # 15% chance of plague halving population
-        plague_struck = True
-        new_pop = math.floor(new_pop / 2.0)
-
-    # 7. Progress Year
-    new_year = state.year + 1
-    new_price = calculate_land_price(provider)
-    
-    # Update average starvation pct
-    total_starved = state.starved_total + starved
-    # Simple moving average over years
-    new_avg_starved = ((state.starved_pct_avg * (state.year - 1)) + (starved / state.population * 100)) / state.year
-
-    # --- Military & Economy updates ---
-    new_soldiers = state.soldiers + decisions.recruit_soldiers
-    # Military cost: 10 bushels per soldier per year (maintenance)
-    soldier_cost = new_soldiers * 10
-    if new_bushels >= soldier_cost:
-        new_bushels -= soldier_cost
-    else:
-        # Desertion if not fed
-        desertion = (soldier_cost - new_bushels) // 10
-        new_soldiers = max(0, new_soldiers - desertion)
-        new_bushels = 0
-    
-    # Treasury gains from trade and taxes (simplified)
-    tax_revenue = math.floor(new_pop * 2.5) # 2.5 gold per person
-    new_treasury = state.treasury_gold + tax_revenue - decisions.train_soldiers_cost - (decisions.buy_fortifications * 50)
-    
-    new_defense = state.defense_level + decisions.buy_fortifications
-    new_strength = new_soldiers * (1 + new_defense * 0.1)
-
-    is_over = new_year > 10
+    # Roll 1 of next year: Land price (lines 310-312)
+    next_land_price = calculate_land_price(provider)
 
     return GameState(
-        year=new_year,
-        population=new_pop,
-        bushels=new_bushels,
-        acres=new_acres,
-        land_price=new_price,
+        year=next_year,
+        population=next_population,
+        bushels=current_bushels,
+        acres=current_acres,
+        land_price=next_land_price,
         starved_this_year=starved,
-        starved_total=total_starved,
-        starved_pct_avg=new_avg_starved,
+        starved_total=new_starved_total,
+        starved_pct_avg=new_starved_pct_avg,
         immigrants_this_year=immigrants,
         harvest_yield=harvest_yield,
         rats_ate=rats_ate,
-        plague_struck=plague_struck,
-        plague_next_year=False,
-        is_over=is_over,
-        game_over_reason=\"COMPLETED\" if is_over else None,
+        plague_struck=plague_struck_this_turn,
+        plague_next_year=plague_next_year,
+        is_over=False,
+        game_over_reason=None,
         soldiers=new_soldiers,
-        military_strength=int(new_strength),
+        military_strength=new_strength,
         treasury_gold=new_treasury,
         defense_level=new_defense,
-        territory_influence=state.territory_influence
+        territory_influence=territory_influence,
     )
 
 
-def evaluate_term(state: GameState) -> EvaluationResult:
-    \"\"\"
-    Final performance evaluation (lines 720-860).
-    \"\"\"
-    L = state.acres / max(1, state.population)
-    P1 = state.starved_pct_avg
-    D1 = state.starved_total
+def evaluate_term(
+    state: GameState,
+    rng: Optional[RandomProvider] = None,
+) -> EvaluationResult:
+    """
+    Evaluates player performance at the end of the 10-year term (lines 860-975).
+    Evaluated sequentially:
+      - Tier 1: Fink (P1 > 33 or L < 7)
+      - Tier 2: Nero & Ivan IV (P1 > 10 or L < 9)
+      - Tier 3: Mediocre / Assassination (P1 > 3 or L < 10)
+      - Tier 4: Fantastic / Charlemagne (P1 <= 3 and L >= 10)
+    """
+    provider = rng if rng is not None else DefaultRNG()
 
-    if P1 > 33 or L < 7:
-        tier = 1
-        msg = \"IN YOUR 10-YEAR TERM OF OFFICE, {0} PERCENT OF THE\\nPOPULATION STARVED PER YEAR ON AVERAGE. A TOTAL OF {1}\\nPEOPLE DIED!! YOU HAVE BEEN DECLARED A 'FINK'!!\".format(int(P1), D1)
-    elif P1 > 10 or L < 9:
-        tier = 2
-        msg = \"YOUR PERFORMANCE COULD HAVE BEEN WORSE, BUT A\\nCONGRESSIONAL INVESTIGATION OF YOUR MISMANAGEMENT\\nIS IN ORDER. {0} PEOPLE DIED IN ALL.\".format(D1)
-    elif P1 > 3 or L < 10:
-        tier = 3
-        msg = \"YOUR HEAVY-HANDED GOVERNING IS TYPICAL OF THE\\nMEDIOCRE. {0} PEOPLE DIED IN ALL.\".format(D1)
-    else:
-        tier = 4
-        msg = \"A FANTASTIC PERFORMANCE!!! CHARLEMAGNE, DISRAELI, AND\\nJEFFERSON COMBINED COULD NOT HAVE DONE BETTER!\"
+    # Line 865: L = A / P
+    acres_per_person = state.acres / state.population if state.population > 0 else 0.0
 
-    return EvaluationResult(
-        tier=tier,
-        acres_per_person=L,
-        avg_starved_pct=P1,
-        total_starved=D1,
-        message=msg
+    p1 = state.starved_pct_avg
+    l_val = acres_per_person
+
+    # Tier 1 (lines 880-885)
+    if p1 > 33.0 or l_val < 7.0:
+        msg = (
+            "DUE TO THIS EXTREME MISMANAGEMENT YOU HAVE NOT ONLY\n"
+            "BEEN IMPEACHED AND THROWN OUT OF OFFICE BUT YOU HAVE\n"
+            "ALSO BEEN DECLARED NATIONAL FINK!!!!"
+        )
+        return EvaluationResult(1, acres_per_person, p1, state.starved_total, msg)
+
+    # Tier 2 (lines 890-892)
+    if p1 > 10.0 or l_val < 9.0:
+        msg = (
+            "YOUR HEAVY-HANDED PERFORMANCE SMACKS OF NERO AND IVAN IV.\n"
+            "THE PEOPLE (REMAINING) FIND YOU AN UNPLEASANT RULER, AND,\n"
+            "FRANKLY, HATE YOUR GUTS!!"
+        )
+        return EvaluationResult(2, acres_per_person, p1, state.starved_total, msg)
+
+    # Tier 3 (lines 895-896)
+    if p1 > 3.0 or l_val < 10.0:
+        # Line 965: INT(P * .8 * RND(1))
+        assassinated = math.floor(state.population * 0.8 * provider())
+        msg = (
+            "YOUR PERFORMANCE COULD HAVE BEEN SOMEWHAT BETTER, BUT\n"
+            f"REALLY WASN'T TOO BAD AT ALL. {assassinated} PEOPLE\n"
+            "WOULD DEARLY LIKE TO SEE YOU ASSASSINATED BUT WE ALL HAVE OUR\n"
+            "TRIVIAL PROBLEMS."
+        )
+        return EvaluationResult(3, acres_per_person, p1, state.starved_total, msg)
+
+    # Tier 4 (lines 900-905)
+    msg = (
+        "A FANTASTIC PERFORMANCE!!!  CHARLEMANGE, DISRAELI, AND\n"
+        "JEFFERSON COMBINED COULD NOT HAVE DONE BETTER!"
     )
+    return EvaluationResult(4, acres_per_person, p1, state.starved_total, msg)

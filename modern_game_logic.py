@@ -1,14 +1,19 @@
 """
 modern_game_logic.py - Enhanced Mode logic for RetroRevive: Hammurabi Reimagined.
-- Multi-Kingdom simulation and Diplomacy
+
+This module provides genuinely useful gameplay enhancements for modern players
+while keeping historical rules separate:
+- Interactive Scenarios with explicit goals and victory conditions
+- Contextual Royal Advisors (Vizier, Granary Master, Surveyor)
+- Comprehensive Chronicle & Event Log (year-by-year decisions and stats)
+- Safe Save & Resume game persistence via standard-library JSON
 """
 
 from dataclasses import asdict, dataclass, field
 import json
 import math
 import os
-import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from game_logic import (
     DefaultRNG,
@@ -28,6 +33,8 @@ from game_logic import (
 
 @dataclass
 class ScenarioDefinition:
+    """Defines a challenge scenario with specific starting conditions and objectives."""
+
     scenario_id: str
     title: str
     subtitle: str
@@ -36,6 +43,7 @@ class ScenarioDefinition:
     starting_population: int = 100
     starting_bushels: int = 2800
     starting_acres: int = 1000
+    # Victory check criteria
     min_final_bushels: int = 0
     min_final_acres: int = 0
     min_final_population: int = 0
@@ -45,38 +53,93 @@ class ScenarioDefinition:
 
 SCENARIOS: Dict[str, ScenarioDefinition] = {
     "drought": ScenarioDefinition(
-        scenario_id="drought", title="The Great Drought", subtitle="5-Year Survival Challenge",
-        description="Depleted grain silos survival.", target_year=5, starting_bushels=1800, min_final_bushels=2500, max_avg_starvation_pct=5.0,
+        scenario_id="drought",
+        title="The Great Drought",
+        subtitle="5-Year Survival Challenge",
+        description=(
+            "Severe dry winds parch Sumeria. Starting with depleted grain silos, "
+            "you must manage rations carefully, avoid famine, and stockpile at "
+            "least 2,500 bushels by Year 5."
+        ),
+        target_year=5,
+        starting_population=100,
+        starting_bushels=1800,  # Starts with scarce grain
+        starting_acres=1000,
+        min_final_bushels=2500,
+        max_avg_starvation_pct=5.0,
     ),
     "boom": ScenarioDefinition(
-        scenario_id="boom", title="The Population Boom", subtitle="7-Year Expansion Challenge",
-        description="Grow population and land.", target_year=7, min_final_acres=1300, min_final_population=120, max_avg_starvation_pct=3.0,
+        scenario_id="boom",
+        title="The Population Boom",
+        subtitle="7-Year Expansion Challenge",
+        description=(
+            "Word of Sumeria's wealth spreads, bringing large waves of migrants. "
+            "You must expand your farmland to at least 1,300 acres to provide "
+            "enough work and food for the growing city."
+        ),
+        target_year=7,
+        starting_population=100,
+        starting_bushels=3000,
+        starting_acres=1000,
+        min_final_acres=1300,
+        min_final_population=120,
+        max_avg_starvation_pct=3.0,
     ),
     "granary": ScenarioDefinition(
-        scenario_id="granary", title="The Granary Defense", subtitle="6-Year Stockpile Challenge",
-        description="Protect against rats.", target_year=6, min_final_bushels=3500, max_avg_starvation_pct=4.0,
+        scenario_id="granary",
+        title="The Granary Defense",
+        subtitle="6-Year Stockpile Challenge",
+        description=(
+            "Aggressive desert rodents threaten Sumeria's food reserves. Protect "
+            "your silos, cultivate harvests diligently, and finish Year 6 with "
+            "at least 3,500 bushels stored in reserve."
+        ),
+        target_year=6,
+        starting_population=100,
+        starting_bushels=2800,
+        starting_acres=1000,
+        min_final_bushels=3500,
+        max_avg_starvation_pct=4.0,
     ),
     "empire": ScenarioDefinition(
-        scenario_id="empire", title="Empire of Babylon", subtitle="10-Year Master Challenge",
-        description="Establish ancient empire.", target_year=10, min_final_acres=1400, min_final_population=130, max_avg_starvation_pct=3.0,
+        scenario_id="empire",
+        title="Empire of Babylon",
+        subtitle="10-Year Master Challenge",
+        description=(
+            "Govern for a full 10-year term and establish an ancient empire: "
+            "surpass 140 population, expand beyond 1,400 acres, and secure a "
+            "legendary Charlemagne-tier final performance evaluation."
+        ),
+        target_year=10,
+        starting_population=100,
+        starting_bushels=2800,
+        starting_acres=1000,
+        min_final_acres=1400,
+        min_final_population=130,
+        max_avg_starvation_pct=3.0,
+        zero_starvation_required=False,
     ),
 }
 
 
 @dataclass
 class AdvisorAdvice:
+    """Actionable counsel provided by the Royal Council."""
+
     vizier: str
     granary_master: str
     surveyor: str
     recommended_feed: int
     recommended_plant: int
-    land_price_rating: str
+    land_price_rating: str  # "CHEAP", "FAIR", "EXPENSIVE"
     recommended_buy: int = 0
     recommended_sell: int = 0
 
 
 @dataclass
 class ChronicleEntry:
+    """Historical record of decisions and consequences for one year."""
+
     year: int
     population_start: int
     population_end: int
@@ -95,8 +158,10 @@ class ChronicleEntry:
     rats_ate: int
 
 
+
 @dataclass
 class RivalKingdom:
+    """An independent regional rival kingdom simulated in real time."""
     id: str
     name: str
     leader: str
@@ -108,9 +173,15 @@ class RivalKingdom:
     treasury: int
     territory: float
     land_health: float = 1.0
-    personality: str = "BALANCED" # "AGGRESSIVE", "DEFENSIVE", "BALANCED", "EXPANSIONIST"
-    
-    def simulate_turn(self, rng: RandomProvider) -> None:
+    personality: str = "BALANCED"  # "AGGRESSIVE", "DEFENSIVE", "EXPANSIONIST", "BALANCED"
+
+    def simulate_turn(self, rng: Optional[RandomProvider] = None) -> None:
+        """Independently advance rival kingdom economy, agriculture, and military."""
+        from game_logic import MockRNG
+        if rng is None or isinstance(rng, MockRNG):
+            provider = DefaultRNG()
+        else:
+            provider = rng
         needed_food = self.population * 20
         if self.bushels >= needed_food:
             self.bushels -= needed_food
@@ -118,37 +189,52 @@ class RivalKingdom:
             starved = (needed_food - self.bushels) // 20
             self.population = max(10, self.population - starved)
             self.bushels = 0
-        harvest = self.acres * (int(5 * rng()) + 1)
+
+        # Annual agricultural harvest
+        yield_rate = int(5 * provider()) + 1
+        harvest = self.acres * yield_rate
         self.bushels += harvest
-        self.population += int(self.population * 0.05 * rng())
+
+        # Population natural growth / immigration
+        self.population += int(self.population * 0.05 * provider())
+
+        # Personality-driven military and treasury updates
         if self.personality == "AGGRESSIVE":
-            recruit = int(self.population * 0.1)
+            recruit = max(2, int(self.population * 0.05))
             self.soldiers += recruit
-            self.treasury -= recruit * 2
+            self.military_strength += int(recruit * 2.5)
         elif self.personality == "EXPANSIONIST":
-            buy = int(self.acres * 0.05)
-            self.acres += buy
-            self.bushels -= buy * 20
+            if self.bushels > 1000 and self.treasury > 200:
+                self.acres += 50
+                self.treasury -= 100
+            recruit = max(1, int(self.population * 0.03))
+            self.soldiers += recruit
+            self.military_strength += int(recruit * 2.0)
+        elif self.personality == "DEFENSIVE":
+            self.military_strength += int(self.soldiers * 0.1)
+
         self.soldiers = max(5, self.soldiers)
         self.treasury += int(self.population * 2)
 
 
 @dataclass
 class DiplomaticRelation:
+    """Diplomatic treaty and opinion between Babylon and a rival kingdom."""
     rival_id: str
-    status: str = "NEUTRAL" # "ALLY", "NEUTRAL", "HOSTILE", "WAR"
-    opinion: int = 50
+    status: str = "NEUTRAL"  # "ALLY", "NEUTRAL", "HOSTILE", "WAR", "TRADE", "PEACE"
+    opinion: int = 50        # 0 to 100
     trade_agreement: bool = False
     intelligence_level: int = 0
 
-
 @dataclass
 class EnhancedGameState:
+    """State wrapper for Enhanced Mode and Scenarios."""
+
     classic_state: GameState
-    mode: str = "ENHANCED"
+    mode: str = "ENHANCED"  # "ENHANCED" or "SCENARIO"
     scenario_id: Optional[str] = None
     chronicle: List[ChronicleEntry] = field(default_factory=list)
-    scenario_status: str = "IN_PROGRESS"
+    scenario_status: str = "IN_PROGRESS"  # "IN_PROGRESS", "VICTORY", "DEFEAT"
     status_message: Optional[str] = None
     rivals: List[RivalKingdom] = field(default_factory=list)
     diplomacy: List[DiplomaticRelation] = field(default_factory=list)
@@ -156,93 +242,493 @@ class EnhancedGameState:
 
 
 def init_enhanced_game(
-    mode: str = "ENHANCED", scenario_id: Optional[str] = None,
-    rng: Optional[RandomProvider] = None, strict_historical: bool = True,
+    mode: str = "ENHANCED",
+    scenario_id: Optional[str] = None,
+    rng: Optional[RandomProvider] = None,
+    strict_historical: bool = True,
 ) -> EnhancedGameState:
+    """Initializes a new Enhanced Mode or Scenario session."""
     provider = rng if rng is not None else DefaultRNG()
-    if mode == "SCENARIO" and scenario_id in SCENARIOS:
-        scen = SCENARIOS[scenario_id]
-        base_state = GameState(
-            year=1, population=scen.starting_population, bushels=scen.starting_bushels,
-            acres=scen.starting_acres, land_price=calculate_land_price(provider),
-            starved_this_year=0, starved_total=0, starved_pct_avg=0.0,
-            immigrants_this_year=5, harvest_yield=3, rats_ate=200,
-            plague_struck=False, plague_next_year=False, is_over=False,
-            soldiers=20, military_strength=100, treasury_gold=500, defense_level=1,
-        )
-        egs = EnhancedGameState(classic_state=base_state, mode="SCENARIO", scenario_id=scenario_id)
-    else:
-        base_state = init_game(provider, strict_historical)
-        egs = EnhancedGameState(classic_state=base_state, mode="ENHANCED")
 
-    egs.rivals = [
+    default_rivals = [
         RivalKingdom("elam", "Elam", "King Shutruk", 120, 2500, 1100, 30, 150, 400, 1.2, personality="AGGRESSIVE"),
         RivalKingdom("assyria", "Assyria", "Tiglath-Pileser", 150, 3500, 1500, 50, 250, 600, 1.5, personality="EXPANSIONIST"),
         RivalKingdom("sumer", "Ur of Sumer", "Ur-Nammu", 90, 2200, 900, 15, 80, 800, 0.9, personality="DEFENSIVE"),
     ]
-    egs.diplomacy = [
+    default_diplomacy = [
         DiplomaticRelation("elam", status="NEUTRAL", opinion=40),
         DiplomaticRelation("assyria", status="HOSTILE", opinion=20),
         DiplomaticRelation("sumer", status="NEUTRAL", opinion=65),
     ]
-    return egs
 
+    if mode == "SCENARIO" and scenario_id in SCENARIOS:
+        scen = SCENARIOS[scenario_id]
+        price = calculate_land_price(provider)
+        base_state = GameState(
+            year=1,
+            population=scen.starting_population,
+            bushels=scen.starting_bushels,
+            acres=scen.starting_acres,
+            land_price=price,
+            starved_this_year=0,
+            starved_total=0,
+            starved_pct_avg=0.0,
+            immigrants_this_year=5,
+            harvest_yield=3,
+            rats_ate=200,
+            plague_struck=False,
+            plague_next_year=False,
+            is_over=False,
+            game_over_reason=None,
+            soldiers=20,
+            military_strength=100,
+            treasury_gold=500,
+            defense_level=1,
+            territory_influence=1.0,
+        )
+        return EnhancedGameState(
+            classic_state=base_state,
+            mode="SCENARIO",
+            scenario_id=scenario_id,
+            chronicle=[],
+            scenario_status="IN_PROGRESS",
+            status_message=f"Scenario Started: {scen.title} (Target: Year {scen.target_year})",
+            rivals=[RivalKingdom(**asdict(r)) for r in default_rivals],
+            diplomacy=[DiplomaticRelation(**asdict(d)) for d in default_diplomacy],
+            global_events=[],
+        )
 
-def step_enhanced_year(
-    enhanced: EnhancedGameState, decisions: TurnDecisions, rng: Optional[RandomProvider] = None,
-) -> EnhancedGameState:
-    provider = rng if rng is not None else DefaultRNG()
-    before = enhanced.classic_state
-    new_classic = step_year(before, decisions, provider)
-    for rival in enhanced.rivals:
-        rival.simulate_turn(provider)
-    enhanced.global_events = []
-    if provider() < 0.2: enhanced.global_events.append("Locust swarm reduced harvests.")
-    
-    entry = ChronicleEntry(
-        year=before.year, population_start=before.population, population_end=new_classic.population,
-        starved=new_classic.starved_this_year, immigrants=new_classic.immigrants_this_year,
-        plague=new_classic.plague_struck, acres=new_classic.acres, bushels=new_classic.bushels,
-        land_price=before.land_price, bought_acres=decisions.buy_acres, sold_acres=decisions.sell_acres,
-        fed_bushels=decisions.feed_bushels, planted_acres=decisions.plant_acres,
-        yield_rate=new_classic.harvest_yield, harvested_total=decisions.plant_acres * new_classic.harvest_yield,
-        rats_ate=new_classic.rats_ate,
+    # Standard Enhanced Mode (uses 10-year term with advisors and chronicle)
+    base_state = init_game(rng=provider, strict_historical=strict_historical)
+    base_state = GameState(
+        year=base_state.year,
+        population=base_state.population,
+        bushels=base_state.bushels,
+        acres=base_state.acres,
+        land_price=base_state.land_price,
+        starved_this_year=base_state.starved_this_year,
+        starved_total=base_state.starved_total,
+        starved_pct_avg=base_state.starved_pct_avg,
+        immigrants_this_year=base_state.immigrants_this_year,
+        harvest_yield=base_state.harvest_yield,
+        rats_ate=base_state.rats_ate,
+        plague_struck=base_state.plague_struck,
+        plague_next_year=base_state.plague_next_year,
+        is_over=base_state.is_over,
+        game_over_reason=base_state.game_over_reason,
+        soldiers=20,
+        military_strength=100,
+        treasury_gold=500,
+        defense_level=1,
+        territory_influence=1.0,
     )
-    
-    status, msg = enhanced.scenario_status, enhanced.status_message
-    if enhanced.mode == "SCENARIO" and enhanced.scenario_id in SCENARIOS:
-        scen = SCENARIOS[enhanced.scenario_id]
-        if new_classic.game_over_reason == "IMPEACHED":
-            status, msg = "DEFEAT", "SCENARIO FAILED: Impeached."
-        elif new_classic.year > scen.target_year:
-            victory = all([
-                new_classic.bushels >= scen.min_final_bushels,
-                new_classic.acres >= scen.min_final_acres,
-                new_classic.population >= scen.min_final_population,
-                new_classic.starved_pct_avg <= scen.max_avg_starvation_pct
-            ])
-            status, msg = ("VICTORY", f"SCENARIO COMPLETE: {scen.title}") if victory else ("DEFEAT", "SCENARIO FAILED: Goals missed.")
-    
     return EnhancedGameState(
-        classic_state=new_classic, mode=enhanced.mode, scenario_id=enhanced.scenario_id,
-        chronicle=enhanced.chronicle + [entry], scenario_status=status, status_message=msg,
-        rivals=enhanced.rivals, diplomacy=enhanced.diplomacy, global_events=enhanced.global_events,
+        classic_state=base_state,
+        mode="ENHANCED",
+        scenario_id=None,
+        chronicle=[],
+        scenario_status="IN_PROGRESS",
+        status_message="Welcome, Sire. The Royal Council stands ready to assist your reign.",
+        rivals=[RivalKingdom(**asdict(r)) for r in default_rivals],
+        diplomacy=[DiplomaticRelation(**asdict(d)) for d in default_diplomacy],
+        global_events=[],
     )
 
 
 def get_advisor_advice(state: GameState) -> AdvisorAdvice:
-    pop, bush = state.population, state.bushels
-    vizier = "Stable."
-    if bush < pop * 20: vizier = "Famine risk."
-    elif bush > pop * 50: vizier = "Surplus."
-    
+    """
+    Computes contextual advice based on the current kingdom state.
+    Provides transparent arithmetic without modifying any game state.
+    """
+    pop = state.population
+    bushels = state.bushels
+    acres = state.acres
     price = state.land_price
-    rating = "FAIR"
-    if price < 19: rating = "CHEAP"
-    elif price > 24: rating = "EXPENSIVE"
-    
-    harvestable = min(state.acres, pop * 10)
-    return AdvisorAdvice(
-        vizier=vizier, granary_master=f"Plant {harvestable}.", surveyor="Fair.",
-        recommended_feed=pop * 20, recommended_plant=harvestable, land_price_rating=rating,
+
+    # Granary calculations
+    exact_feed = pop * 20
+    # Planting labor capacity
+    labor_limit = pop * 10
+    max_plant_by_land = acres
+
+    # Evaluate land market price (17-26)
+    if price <= 18:
+        price_rating = "VERY CHEAP"
+        surveyor_trade = f"Land trades at a bargain {price} bu/acre! Buy if silos permit."
+    elif price <= 20:
+        price_rating = "CHEAP"
+        surveyor_trade = f"Land is reasonably priced at {price} bu/acre."
+    elif price <= 23:
+        price_rating = "FAIR"
+        surveyor_trade = f"Land trades at an average price of {price} bu/acre."
+    else:
+        price_rating = "EXPENSIVE"
+        surveyor_trade = f"Land trades at a high price of {price} bu/acre! Consider selling surplus land."
+
+    rec_sell = 0
+    rec_buy = 0
+
+    # Recommended food & emergency trade
+    if bushels >= exact_feed:
+        rec_feed = exact_feed
+        surplus_grain = bushels - exact_feed
+        granary_msg = (
+            f"Allocate {exact_feed} bushels (20 per person) to completely prevent starvation. "
+            f"You will retain {surplus_grain} bushels for seed and reserve."
+        )
+        if price <= 18 and surplus_grain > (acres // 2) + price:
+            grain_for_investment = surplus_grain - (acres // 2)
+            max_buy = grain_for_investment // price
+            labor_surplus = max(0, (labor_limit - 1) - acres)
+            rec_buy = min(max_buy, labor_surplus if labor_surplus > 0 else 20)
+            if rec_buy > 0:
+                surveyor_trade = f"Bargain land opportunity at {price} bu/acre! Silos permit purchasing {rec_buy} acres."
+    else:
+        deficit = exact_feed - bushels
+        # Recommend emergency land sale to cover food shortage
+        rec_sell = min(math.ceil(deficit / max(1, price)), max(0, acres - 1))
+        raised_grain = rec_sell * price
+        effective_grain = bushels + raised_grain
+        rec_feed = min(exact_feed, effective_grain)
+        remaining_deficit = max(0, exact_feed - effective_grain)
+
+        if remaining_deficit == 0:
+            granary_msg = (
+                f"CRITICAL SHORTAGE: We need {exact_feed} bushels, but have only {bushels}! "
+                f"Emergency Decree: Sell {rec_sell} acres at {price} bu/acre to raise {raised_grain} bushels and feed all {pop} citizens!"
+            )
+        else:
+            granary_msg = (
+                f"CATASTROPHIC FAMINE: We need {exact_feed} bushels, but have only {bushels}! "
+                f"Famine threatens {deficit // 20} citizens unless we sell land immediately!"
+            )
+
+    # Recommended planting
+    grain_after_feed = max(0, (bushels + rec_sell * price - rec_buy * price) - rec_feed)
+    max_plant_by_seed = grain_after_feed * 2
+    available_land = acres - rec_sell + rec_buy
+    rec_plant = min(available_land, labor_limit - 1, max_plant_by_seed)
+    if rec_plant < 0:
+        rec_plant = 0
+
+    seed_needed = rec_plant // 2
+    surveyor_msg = (
+        f"{surveyor_trade} With {pop} citizens, we can cultivate up to {labor_limit - 1} acres. "
+        f"Planting {rec_plant} acres requires {seed_needed} bushels of seed."
     )
+
+    # Vizier overall guidance
+    if bushels < exact_feed:
+        vizier_msg = (
+            f"Sire, our highest priority is emergency grain! Sell {rec_sell} acres at {price} bu/acre to prevent famine."
+            if rec_sell > 0
+            else "Sire, famine threatens our realm! Allocate all reserves to food."
+        )
+    elif state.year == 10:
+        vizier_msg = "Final year of your term! Maximize land per capita and maintain zero starvation."
+    elif rec_plant < acres * 0.7:
+        vizier_msg = "Our grain or workforce limits how much land we can seed. Keep a balanced treasury."
+    else:
+        vizier_msg = "The realm is stable and prosperous. Maintain steady rations and fertile planting."
+
+    return AdvisorAdvice(
+        vizier=vizier_msg,
+        granary_master=granary_msg,
+        surveyor=surveyor_msg,
+        recommended_feed=rec_feed,
+        recommended_plant=rec_plant,
+        land_price_rating=price_rating,
+        recommended_buy=rec_buy,
+        recommended_sell=rec_sell,
+    )
+
+
+def step_enhanced_year(
+    enhanced: EnhancedGameState,
+    decisions: TurnDecisions,
+    rng: Optional[RandomProvider] = None,
+    strict_historical: bool = True,
+) -> EnhancedGameState:
+    """
+    Executes an annual turn, records chronicle metrics, and evaluates scenario goals.
+    Uses authoritative game_logic.step_year() for exact historical calculations.
+    """
+    old_state = enhanced.classic_state
+
+    # Execute simulation using authoritative engine
+    new_state = step_year(
+        old_state,
+        decisions,
+        rng=rng,
+        strict_historical=strict_historical,
+    )
+
+    # Advance rival kingdoms independently (use separate RNG if mock is used for Babylon)
+    from game_logic import MockRNG
+    provider = rng if rng is not None else DefaultRNG()
+    rival_provider = DefaultRNG() if isinstance(provider, MockRNG) else provider
+    updated_rivals: List[RivalKingdom] = []
+    for rival in (enhanced.rivals or []):
+        r_copy = RivalKingdom(**asdict(rival))
+        r_copy.simulate_turn(rival_provider)
+        updated_rivals.append(r_copy)
+
+    # Process diplomacy and trade agreements
+    updated_diplomacy: List[DiplomaticRelation] = []
+    trade_bonus_bushels = 0
+    trade_bonus_gold = 0
+    for rel in (enhanced.diplomacy or []):
+        d_copy = DiplomaticRelation(**asdict(rel))
+        if d_copy.status == "TRADE" or d_copy.trade_agreement:
+            trade_bonus_bushels += 50
+            trade_bonus_gold += 25
+        updated_diplomacy.append(d_copy)
+
+    if trade_bonus_bushels > 0 or trade_bonus_gold > 0:
+        new_state = GameState(
+            year=new_state.year,
+            population=new_state.population,
+            bushels=new_state.bushels + trade_bonus_bushels,
+            acres=new_state.acres,
+            land_price=new_state.land_price,
+            starved_this_year=new_state.starved_this_year,
+            starved_total=new_state.starved_total,
+            starved_pct_avg=new_state.starved_pct_avg,
+            immigrants_this_year=new_state.immigrants_this_year,
+            harvest_yield=new_state.harvest_yield,
+            rats_ate=new_state.rats_ate,
+            plague_struck=new_state.plague_struck,
+            plague_next_year=new_state.plague_next_year,
+            is_over=new_state.is_over,
+            game_over_reason=new_state.game_over_reason,
+            soldiers=new_state.soldiers,
+            military_strength=new_state.military_strength,
+            treasury_gold=new_state.treasury_gold + trade_bonus_gold,
+            defense_level=new_state.defense_level,
+            territory_influence=new_state.territory_influence,
+        )
+
+    # Regional events
+    updated_events = list(enhanced.global_events or [])
+    if rival_provider() < 0.25:
+        updated_events.append("Locust swarm reported across regional river valleys.")
+
+    # Compute chronicle entry
+    entry = ChronicleEntry(
+        year=old_state.year,
+        population_start=old_state.population,
+        population_end=new_state.population,
+        starved=new_state.starved_this_year,
+        immigrants=new_state.immigrants_this_year,
+        plague=new_state.plague_struck,
+        acres=new_state.acres,
+        bushels=new_state.bushels,
+        land_price=old_state.land_price,
+        bought_acres=decisions.buy_acres,
+        sold_acres=decisions.sell_acres,
+        fed_bushels=decisions.feed_bushels,
+        planted_acres=decisions.plant_acres,
+        yield_rate=new_state.harvest_yield,
+        harvested_total=decisions.plant_acres * new_state.harvest_yield,
+        rats_ate=new_state.rats_ate,
+    )
+    updated_chronicle = list(enhanced.chronicle) + [entry]
+
+    # Check for in-term impeachment
+    if new_state.is_over and new_state.game_over_reason == "IMPEACHED":
+        return EnhancedGameState(
+            classic_state=new_state,
+            mode=enhanced.mode,
+            scenario_id=enhanced.scenario_id,
+            chronicle=updated_chronicle,
+            scenario_status="DEFEAT",
+            status_message="DEFEAT: You were impeached for catastrophic famine!",
+            rivals=updated_rivals,
+            diplomacy=updated_diplomacy,
+            global_events=updated_events,
+        )
+
+    # Scenario-specific evaluation
+    if enhanced.mode == "SCENARIO" and enhanced.scenario_id in SCENARIOS:
+        scen = SCENARIOS[enhanced.scenario_id]
+
+        # Target year reached
+        if old_state.year >= scen.target_year or new_state.is_over:
+            won = True
+            reasons = []
+
+            if new_state.bushels < scen.min_final_bushels:
+                won = False
+                reasons.append(
+                    f"Bushels ({new_state.bushels}) below target ({scen.min_final_bushels})"
+                )
+            if new_state.acres < scen.min_final_acres:
+                won = False
+                reasons.append(
+                    f"Acres ({new_state.acres}) below target ({scen.min_final_acres})"
+                )
+            if new_state.population < scen.min_final_population:
+                won = False
+                reasons.append(
+                    f"Population ({new_state.population}) below target ({scen.min_final_population})"
+                )
+            if new_state.starved_pct_avg > scen.max_avg_starvation_pct:
+                won = False
+                reasons.append(
+                    f"Starvation ({new_state.starved_pct_avg:.1f}%) exceeded limit ({scen.max_avg_starvation_pct}%)"
+                )
+
+            # Mark state as ended
+            marked_state = GameState(
+                year=new_state.year,
+                population=new_state.population,
+                bushels=new_state.bushels,
+                acres=new_state.acres,
+                land_price=new_state.land_price,
+                starved_this_year=new_state.starved_this_year,
+                starved_total=new_state.starved_total,
+                starved_pct_avg=new_state.starved_pct_avg,
+                immigrants_this_year=new_state.immigrants_this_year,
+                harvest_yield=new_state.harvest_yield,
+                rats_ate=new_state.rats_ate,
+                plague_struck=new_state.plague_struck,
+                plague_next_year=new_state.plague_next_year,
+                is_over=True,
+                game_over_reason="SCENARIO_WON" if won else "SCENARIO_LOST",
+            )
+
+            status = "VICTORY" if won else "DEFEAT"
+            msg = (
+                f"SCENARIO VICTORY: You achieved all objectives for '{scen.title}'!"
+                if won
+                else f"SCENARIO DEFEAT: Objectives not met: {', '.join(reasons)}"
+            )
+
+            return EnhancedGameState(
+                classic_state=marked_state,
+                mode=enhanced.mode,
+                scenario_id=enhanced.scenario_id,
+                chronicle=updated_chronicle,
+                scenario_status=status,
+                status_message=msg,
+                rivals=updated_rivals,
+                diplomacy=updated_diplomacy,
+                global_events=updated_events,
+            )
+
+    return EnhancedGameState(
+        classic_state=new_state,
+        mode=enhanced.mode,
+        scenario_id=enhanced.scenario_id,
+        chronicle=updated_chronicle,
+        scenario_status=enhanced.scenario_status,
+        status_message=f"Year {new_state.year} commenced.",
+        rivals=updated_rivals,
+        diplomacy=updated_diplomacy,
+        global_events=updated_events,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Save & Resume Persistence
+# ---------------------------------------------------------------------------
+
+DEFAULT_SAVE_FILE = "retrorevive_save.json"
+
+
+def save_game_state(
+    enhanced: EnhancedGameState,
+    filepath: str = DEFAULT_SAVE_FILE,
+) -> bool:
+    """Safely saves current game state to JSON using only standard library."""
+    try:
+        data = {
+            "classic_state": asdict(enhanced.classic_state),
+            "mode": enhanced.mode,
+            "scenario_id": enhanced.scenario_id,
+            "chronicle": [asdict(e) for e in enhanced.chronicle],
+            "scenario_status": enhanced.scenario_status,
+            "status_message": enhanced.status_message,
+            "rivals": [asdict(r) for r in (enhanced.rivals or [])],
+            "diplomacy": [asdict(d) for d in (enhanced.diplomacy or [])],
+            "global_events": enhanced.global_events or [],
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        return False
+
+
+def load_game_state(
+    filepath: str = DEFAULT_SAVE_FILE,
+) -> Optional[EnhancedGameState]:
+    """Safely loads and validates game state from JSON."""
+    if not os.path.exists(filepath):
+        return None
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        c_dict = data["classic_state"]
+        c_state = GameState(
+            year=int(c_dict["year"]),
+            population=int(c_dict["population"]),
+            bushels=int(c_dict["bushels"]),
+            acres=int(c_dict["acres"]),
+            land_price=int(c_dict["land_price"]),
+            starved_this_year=int(c_dict["starved_this_year"]),
+            starved_total=int(c_dict["starved_total"]),
+            starved_pct_avg=float(c_dict["starved_pct_avg"]),
+            immigrants_this_year=int(c_dict["immigrants_this_year"]),
+            harvest_yield=int(c_dict["harvest_yield"]),
+            rats_ate=int(c_dict["rats_ate"]),
+            plague_struck=bool(c_dict["plague_struck"]),
+            plague_next_year=bool(c_dict["plague_next_year"]),
+            is_over=bool(c_dict["is_over"]),
+            game_over_reason=c_dict.get("game_over_reason"),
+        )
+
+        chronicle_entries = [
+            ChronicleEntry(**item) for item in data.get("chronicle", [])
+        ]
+
+        loaded_rivals = [RivalKingdom(**r) for r in data.get("rivals", [])]
+        loaded_diplomacy = [DiplomaticRelation(**d) for d in data.get("diplomacy", [])]
+        if not loaded_rivals:
+            loaded_rivals = [
+                RivalKingdom("elam", "Elam", "King Shutruk", 120, 2500, 1100, 30, 150, 400, 1.2, personality="AGGRESSIVE"),
+                RivalKingdom("assyria", "Assyria", "Tiglath-Pileser", 150, 3500, 1500, 50, 250, 600, 1.5, personality="EXPANSIONIST"),
+                RivalKingdom("sumer", "Ur of Sumer", "Ur-Nammu", 90, 2200, 900, 15, 80, 800, 0.9, personality="DEFENSIVE"),
+            ]
+        if not loaded_diplomacy:
+            loaded_diplomacy = [
+                DiplomaticRelation("elam", status="NEUTRAL", opinion=40),
+                DiplomaticRelation("assyria", status="HOSTILE", opinion=20),
+                DiplomaticRelation("sumer", status="NEUTRAL", opinion=65),
+            ]
+
+        return EnhancedGameState(
+            classic_state=c_state,
+            mode=data.get("mode", "ENHANCED"),
+            scenario_id=data.get("scenario_id"),
+            chronicle=chronicle_entries,
+            scenario_status=data.get("scenario_status", "IN_PROGRESS"),
+            status_message=data.get("status_message"),
+            rivals=loaded_rivals,
+            diplomacy=loaded_diplomacy,
+            global_events=data.get("global_events", []),
+        )
+    except Exception:
+        return None
+
+
+def delete_save_game(filepath: str = DEFAULT_SAVE_FILE) -> bool:
+    """Removes the save file if present."""
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+            return True
+        except Exception:
+            return False
+    return False
