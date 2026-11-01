@@ -62,6 +62,13 @@ class GameState:
     is_over: bool  # True if the game reached any ending
     game_over_reason: Optional[str] = None  # "STEWARD_FIRED", "IMPEACHED", "COMPLETED"
 
+    # --- Multi-Kingdom & Military Expansion ---
+    soldiers: int = 0
+    military_strength: int = 0  # Combat rating
+    treasury_gold: int = 0      # Currency for diplomacy and military
+    defense_level: int = 0      # Fortification bonus
+    territory_influence: float = 1.0  # Regional power scale
+
 
 @dataclass(frozen=True)
 class TurnDecisions:
@@ -71,6 +78,11 @@ class TurnDecisions:
     sell_acres: int = 0
     feed_bushels: int = 0
     plant_acres: int = 0
+
+    # --- Expansion Decisions ---
+    recruit_soldiers: int = 0
+    train_soldiers_cost: int = 0
+    buy_fortifications: int = 0
 
 
 @dataclass(frozen=True)
@@ -131,6 +143,11 @@ def init_game(
         plague_next_year=False,
         is_over=False,
         game_over_reason=None,
+        soldiers=0,
+        military_strength=0,
+        treasury_gold=0,
+        defense_level=0,
+        territory_influence=1.0,
     )
 
 
@@ -366,6 +383,11 @@ def step_year(
                 plague_next_year=plague_next_year,
                 is_over=True,
                 game_over_reason="IMPEACHED",
+                soldiers=getattr(state, "soldiers", 0),
+                military_strength=getattr(state, "military_strength", 0),
+                treasury_gold=getattr(state, "treasury_gold", 0),
+                defense_level=getattr(state, "defense_level", 0),
+                territory_influence=getattr(state, "territory_influence", 1.0),
             )
 
         # Line 553: P1 = ((Z - 1) * P1 + D * 100 / P) / Z
@@ -387,6 +409,24 @@ def step_year(
         # Line 228: P = INT(P / 2)
         next_population = next_population // 2
 
+    # Military & economy updates (backward-compatible)
+    recruits = getattr(decisions, "recruit_soldiers", 0)
+    train_cost = getattr(decisions, "train_soldiers_cost", 0)
+    forts = getattr(decisions, "buy_fortifications", 0)
+
+    current_soldiers = getattr(state, "soldiers", 0)
+    current_treasury = getattr(state, "treasury_gold", 0)
+    current_defense = getattr(state, "defense_level", 0)
+    territory_influence = getattr(state, "territory_influence", 1.0)
+
+    new_soldiers = current_soldiers + recruits
+    new_defense = current_defense + forts
+    new_treasury = current_treasury
+    if recruits > 0 or train_cost > 0 or forts > 0 or current_treasury > 0:
+        tax_revenue = math.floor(next_population * 2)
+        new_treasury = max(0, current_treasury + tax_revenue - train_cost - (forts * 50))
+    new_strength = int(new_soldiers * (1.0 + new_defense * 0.1)) if new_soldiers > 0 else 0
+
     # Line 270: IF Z = 11 THEN 860
     if next_year == 11:
         return GameState(
@@ -405,6 +445,11 @@ def step_year(
             plague_next_year=plague_next_year,
             is_over=True,
             game_over_reason="COMPLETED",
+            soldiers=new_soldiers,
+            military_strength=new_strength,
+            treasury_gold=new_treasury,
+            defense_level=new_defense,
+            territory_influence=territory_influence,
         )
 
     # Roll 1 of next year: Land price (lines 310-312)
@@ -426,6 +471,11 @@ def step_year(
         plague_next_year=plague_next_year,
         is_over=False,
         game_over_reason=None,
+        soldiers=new_soldiers,
+        military_strength=new_strength,
+        treasury_gold=new_treasury,
+        defense_level=new_defense,
+        territory_influence=territory_influence,
     )
 
 

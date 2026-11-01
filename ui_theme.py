@@ -852,3 +852,83 @@ class UIDecreePreview:
         # 6. Explicit Uncertainty Label
         uncert_surf = FontManager.small(10).render("* Harvest (1-5 bu/ac) & Rats (0-50%) determined on decree.", True, Palette.TEXT_MUTED)
         surface.blit(uncert_surf, (self.rect.x + 12, py))
+
+
+# ---------------------------------------------------------------------------
+# Component: UITextInput (Direct Agent Mandate & Text Entry)
+# ---------------------------------------------------------------------------
+
+class UITextInput:
+    """Single-line text input widget with cursor blinking and focus ring."""
+
+    def __init__(
+        self,
+        rect: Tuple[int, int, int, int],
+        placeholder: str = "Enter mandate...",
+        font_size: int = 14,
+        max_length: int = 120,
+    ) -> None:
+        self.rect = pygame.Rect(rect)
+        self.placeholder = placeholder
+        self.font_size = font_size
+        self.max_length = max_length
+        self.text = ""
+        self.active = False
+        self._cursor_timer = 0.0
+        self._show_cursor = True
+
+    def handle_event(self, event: pygame.event.Event, mouse_pos: Tuple[int, int]) -> bool:
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            self.active = self.rect.collidepoint(mouse_pos)
+            return self.active
+
+        if self.active and event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_BACKSPACE:
+                self.text = self.text[:-1]
+                return True
+            elif event.key == pygame.K_RETURN:
+                self.active = False
+                return True
+            elif event.key == pygame.K_ESCAPE:
+                self.active = False
+                return True
+            elif event.unicode and len(self.text) < self.max_length and event.unicode.isprintable():
+                self.text += event.unicode
+                return True
+
+        return False
+
+    def update(self, dt: float) -> None:
+        self._cursor_timer += dt
+        if self._cursor_timer >= 0.5:
+            self._cursor_timer = 0.0
+            self._show_cursor = not self._show_cursor
+
+    def draw(self, surface: pygame.Surface) -> None:
+        # Background
+        bg_col = Palette.SAPPHIRE_DARK if self.active else Palette.SAPPHIRE_BASE
+        pygame.draw.rect(surface, bg_col, self.rect, border_radius=6)
+
+        # Border
+        border_col = Palette.GOLD_METALLIC if self.active else Palette.PANEL_BORDER
+        width = 2 if self.active else 1
+        pygame.draw.rect(surface, border_col, self.rect, width=width, border_radius=6)
+
+        # Text or placeholder
+        font = FontManager.regular(self.font_size)
+        px = self.rect.x + 10
+        py = self.rect.y + (self.rect.height - font.get_height()) // 2
+
+        if self.text:
+            txt_surf = font.render(self.text, True, Palette.TEXT_TITLE)
+            surface.blit(txt_surf, (px, py))
+            if self.active and self._show_cursor:
+                cx = px + txt_surf.get_width() + 2
+                cy1 = py + 2
+                cy2 = py + font.get_height() - 2
+                pygame.draw.line(surface, Palette.GOLD_METALLIC, (cx, cy1), (cx, cy2), 2)
+        else:
+            ph_surf = font.render(self.placeholder, True, Palette.TEXT_MUTED)
+            surface.blit(ph_surf, (px, py))
+            if self.active and self._show_cursor:
+                pygame.draw.line(surface, Palette.GOLD_METALLIC, (px, py + 2), (px, py + font.get_height() - 2), 2)

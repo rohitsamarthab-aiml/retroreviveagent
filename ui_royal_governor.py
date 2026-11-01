@@ -1,16 +1,15 @@
 """
-ui_royal_governor.py - Visual Royal Governor Dashboard for RetroRevive.
+ui_royal_governor.py — Advanced Royal Governor Dashboard for RetroRevive.
 
 Provides a dedicated interactive interface for the AI Royal Governor:
-- Goal delegation controls (preset goals & turn duration stepper)
-- Real-time display of the autonomous decision cycle:
-    1. Observe (real game engine state & disaster checks)
-    2. Reason & Plan (LLM or rule-based cognitive steps)
-    3. Tool Calls (actual authoritative game-engine calls)
-    4. Act & Execute (advance turn)
-    5. Verify & Delta (before/after resource proof)
-- Turn-by-turn delegation history
-- Instant player override / revocation button
+- Goal delegation controls (5 preset mandates, custom text input, & turn duration stepper)
+- Multi-tab command center:
+    1. OVERVIEW: Real-time kingdom resources, before/after deltas, food security meters
+    2. INTELLIGENCE: Rival kingdoms (Elam, Assyria, Ur of Sumer), scouting intel, diplomacy status
+    3. COGNITIVE LOG: ReAct Observe-Recall-Think-Plan-Act-Verify cycle, reasoning, tool calls
+    4. CHRONICLE: Longitudinal history, harvest trends, rat damage, immigration records
+- Real-time player override / instant control revocation
+- 100% standardized in English
 """
 
 from __future__ import annotations
@@ -23,14 +22,15 @@ import pygame
 from game_logic import GameState
 from modern_game_logic import EnhancedGameState
 from royal_governor import ActionRecord, AgentStatus, DelegationSession, RoyalGovernor
-from ui_theme import FontManager, Palette, SoundSynthesizer, UIButton
+from ui_theme import FontManager, Palette, SoundSynthesizer, UIButton, UITextInput
 
 
 PRESET_GOALS = [
     ("🛡️ Famine Defense", "Prevent famine, guarantee rations for all citizens, and maintain grain reserves."),
     ("🌾 Agrarian Prosperity", "Maximize agricultural planting, balance grain reserves, and grow the population."),
     ("🏛️ Imperial Expansion", "Acquire fertile land whenever market prices are cheap while maintaining zero starvation."),
-    ("💰 Granary Stockpile", "Conserve grain, protect against rodent infestation, and build a multi-year food buffer."),
+    ("⚔️ Military Dominance", "Expand army garrison, build fortifications, scout rivals, and establish regional deterrence."),
+    ("🤝 Hegemony & Trade", "Form trade agreements, negotiate alliances, and balance diplomacy across Mesopotamia."),
 ]
 
 
@@ -53,12 +53,20 @@ class RoyalGovernorDashboard:
         self.selected_goal_idx = 0
         self.selected_goal = PRESET_GOALS[0][1]
         self.turns_to_delegate = 3
+        self.current_tab = "OVERVIEW"  # "OVERVIEW", "INTELLIGENCE", "COGNITIVE LOG", "CHRONICLE"
 
         # UI state
         self.status_message = "Royal Governor standing by. Assign a mandate or execute step-by-step."
         self.last_record: Optional[ActionRecord] = None
         self.action_history: List[ActionRecord] = []
         self.is_executing = False
+
+        # Custom mandate text input
+        self.custom_mandate_input = UITextInput(
+            rect=(30, 205, 350, 36),
+            placeholder="Type custom mandate or select above...",
+            font_size=12,
+        )
 
         # Setup Buttons
         self._init_buttons()
@@ -68,24 +76,24 @@ class RoyalGovernorDashboard:
         self.goal_buttons = []
         for i, (label, _) in enumerate(PRESET_GOALS):
             btn = UIButton(
-                rect=(30 + (i % 2) * 180, 110 + (i // 2) * 44, 172, 38),
+                rect=(30 + (i % 2) * 180, 85 + (i // 2) * 38, 172, 34),
                 text=label,
                 callback=lambda idx=i: self._select_goal(idx),
-                font_size=12,
+                font_size=11,
                 color_scheme="gold" if i == self.selected_goal_idx else "sand",
             )
             self.goal_buttons.append(btn)
 
         # Turns stepper
         self.btn_turns_minus = UIButton(
-            rect=(180, 215, 36, 32),
+            rect=(180, 250, 36, 32),
             text="-",
             callback=self._decrement_turns,
             font_size=16,
             color_scheme="sand",
         )
         self.btn_turns_plus = UIButton(
-            rect=(340, 215, 36, 32),
+            rect=(340, 250, 36, 32),
             text="+",
             callback=self._increment_turns,
             font_size=16,
@@ -94,41 +102,61 @@ class RoyalGovernorDashboard:
 
         # Execution controls
         self.btn_step_turn = UIButton(
-            rect=(30, 260, 350, 42),
-            text="▶ DELEGATE 1 TURN (REASON & ACT)",
+            rect=(30, 290, 350, 38),
+            text="▶ STEP 1 TURN (REASON & ACT)",
             callback=self._delegate_single_turn,
-            font_size=13,
+            font_size=12,
             primary=True,
             color_scheme="gold",
         )
 
         self.btn_run_all = UIButton(
-            rect=(30, 310, 350, 42),
+            rect=(30, 335, 350, 38),
             text=f"⏩ DELEGATE ALL {self.turns_to_delegate} TURNS",
             callback=self._delegate_all_turns,
-            font_size=13,
+            font_size=12,
             color_scheme="lapis",
         )
 
         self.btn_revoke = UIButton(
-            rect=(30, 360, 350, 38),
+            rect=(30, 380, 350, 36),
             text="⏹ REVOKE DELEGATION (TAKE CONTROL)",
             callback=self._revoke_delegation,
-            font_size=12,
+            font_size=11,
             color_scheme="crimson",
         )
 
         self.btn_return = UIButton(
-            rect=(30, 660, 350, 38),
+            rect=(30, 665, 350, 36),
             text="↩ RETURN TO KINGDOM COMMAND",
             callback=self._return_to_game,
-            font_size=13,
+            font_size=12,
             color_scheme="sand",
         )
+
+        # Tab navigation buttons
+        tab_names = ["OVERVIEW", "INTELLIGENCE", "COGNITIVE LOG", "CHRONICLE"]
+        self.tab_buttons = []
+        for i, tname in enumerate(tab_names):
+            t_btn = UIButton(
+                rect=(420 + i * 205, 75, 195, 34),
+                text=tname,
+                callback=lambda t=tname: self._set_tab(t),
+                font_size=11,
+                color_scheme="gold" if tname == self.current_tab else "sand",
+            )
+            self.tab_buttons.append(t_btn)
+
+    def _set_tab(self, tab: str) -> None:
+        self.current_tab = tab
+        for btn in self.tab_buttons:
+            btn.color_scheme = "gold" if btn.text == tab else "sand"
+        SoundSynthesizer.play("click")
 
     def _select_goal(self, idx: int) -> None:
         self.selected_goal_idx = idx
         self.selected_goal = PRESET_GOALS[idx][1]
+        self.custom_mandate_input.text = ""
         for i, btn in enumerate(self.goal_buttons):
             btn.color_scheme = "gold" if i == idx else "sand"
         SoundSynthesizer.play("click")
@@ -145,387 +173,357 @@ class RoyalGovernorDashboard:
             self.btn_run_all.text = f"⏩ DELEGATE ALL {self.turns_to_delegate} TURNS"
             SoundSynthesizer.play("click")
 
+    def _get_active_mandate(self) -> str:
+        if self.custom_mandate_input.text.strip():
+            return self.custom_mandate_input.text.strip()
+        return self.selected_goal
+
     def _delegate_single_turn(self) -> None:
         if self.governor.current_enhanced_state.classic_state.is_over:
             self.status_message = "Reign has ended. No further turns can be delegated."
-            SoundSynthesizer.play("warning")
             return
 
-        SoundSynthesizer.play("chime")
-        session = self.governor.delegate(self.selected_goal, turns=1)
+        mandate = self._get_active_mandate()
+        self.status_message = f"Royal Governor executing Turn {self.governor.current_enhanced_state.classic_state.year}..."
+        session = self.governor.delegate(goal=mandate, turns=1)
         if session.action_history:
             self.last_record = session.action_history[-1]
-            self.action_history.append(self.last_record)
-            st = self.governor.current_enhanced_state.classic_state
-            self.status_message = f"Year {self.last_record.game_year} executed autonomously. Kingdom in Year {st.year}."
-            if self.last_record.verification_ok:
-                SoundSynthesizer.play("coin")
-            else:
-                SoundSynthesizer.play("warning")
+            self.action_history.extend(session.action_history)
+        self.status_message = f"Turn {self.last_record.game_year if self.last_record else 1} completed by {self.governor.backend_name}."
+        SoundSynthesizer.play("action")
 
     def _delegate_all_turns(self) -> None:
         if self.governor.current_enhanced_state.classic_state.is_over:
             self.status_message = "Reign has ended. No further turns can be delegated."
-            SoundSynthesizer.play("warning")
             return
 
-        SoundSynthesizer.play("gong")
-        turns = self.turns_to_delegate
-        session = self.governor.delegate(self.selected_goal, turns=turns)
-        for rec in session.action_history:
-            if rec not in self.action_history:
-                self.action_history.append(rec)
+        mandate = self._get_active_mandate()
+        self.status_message = f"Royal Governor running {self.turns_to_delegate} turns autonomously..."
+        session = self.governor.delegate(goal=mandate, turns=self.turns_to_delegate)
         if session.action_history:
             self.last_record = session.action_history[-1]
-            st = self.governor.current_enhanced_state.classic_state
-            self.status_message = (
-                f"Delegation completed: {session.turns_completed} turns executed. "
-                f"Now Year {st.year} of 10."
-            )
-            SoundSynthesizer.play("harvest")
+            self.action_history.extend(session.action_history)
+        self.status_message = f"Delegation of {session.turns_completed} turns finished."
+        SoundSynthesizer.play("level_up")
 
     def _revoke_delegation(self) -> None:
         self.governor.revoke()
-        self.status_message = "Delegation revoked by player. Sovereign Hammurabi has taken manual command."
-        SoundSynthesizer.play("warning")
+        self.status_message = "Control REVOKED. King Hammurabi resumes immediate manual rule."
+        SoundSynthesizer.play("alert")
 
     def _return_to_game(self) -> None:
         SoundSynthesizer.play("click")
         self.on_return()
 
     def handle_event(self, event: pygame.event.Event, mouse_pos: Tuple[int, int]) -> None:
-        for btn in self.goal_buttons:
-            btn.handle_event(event, mouse_pos)
-        self.btn_turns_minus.handle_event(event, mouse_pos)
-        self.btn_turns_plus.handle_event(event, mouse_pos)
-        self.btn_step_turn.handle_event(event, mouse_pos)
-        self.btn_run_all.handle_event(event, mouse_pos)
-        self.btn_revoke.handle_event(event, mouse_pos)
-        self.btn_return.handle_event(event, mouse_pos)
+        # Custom mandate text input
+        self.custom_mandate_input.handle_event(event, mouse_pos)
 
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE or event.key == pygame.K_BACKSPACE:
-                self._return_to_game()
-            elif event.key == pygame.K_SPACE:
-                self._delegate_single_turn()
-            elif event.key == pygame.K_r:
-                self._revoke_delegation()
-
-    def update(self, dt: float) -> None:
-        pass
-
-    def draw(self, surf: pygame.Surface) -> None:
-        # Deep sapphire backdrop
-        surf.fill(Palette.BG_DARK)
-
-        # Draw decorative grid / subtle backdrop lines
-        for y in range(0, self.screen_h, 40):
-            pygame.draw.line(surf, (15, 22, 38), (0, y), (self.screen_w, y), 1)
-
-        # Header bar
-        self._draw_header(surf)
-
-        # 3-Column Layout:
-        # Col 1: Delegation Mandate & Real Game Engine Observation (x=20 to 390)
-        self._draw_col1_mandate(surf)
-
-        # Col 2: Cognitive Reasoning & Authoritative Tool Sequence (x=410 to 830)
-        self._draw_col2_reasoning(surf)
-
-        # Col 3: Resource Deltas & Action History (x=850 to 1260)
-        self._draw_col3_deltas(surf)
-
-        # Footer toast status
-        self._draw_footer(surf)
-
-    def _draw_header(self, surf: pygame.Surface) -> None:
-        # Header banner box
-        hdr_rect = pygame.Rect(20, 15, self.screen_w - 40, 54)
-        pygame.draw.rect(surf, Palette.PANEL_BG, hdr_rect, border_radius=6)
-        pygame.draw.rect(surf, Palette.GOLD_BASE, hdr_rect, width=2, border_radius=6)
-
-        font_title = FontManager.get_font(20, bold=True, serif=True)
-        title_s = font_title.render("⚖ ROYAL GOVERNOR — AUTONOMOUS SOVEREIGN AGENT", True, Palette.GOLD_LIGHT)
-        surf.blit(title_s, (36, 28))
-
-        # Backend Badge (Honest Architecture Label)
-        backend = self.governor.backend_name
-        if backend == "GEMINI_LLM":
-            badge_text = "● BACKEND: GOOGLE GEMINI 1.5 FLASH (TOOL-CALLING LLM)"
-            badge_color = Palette.SUCCESS_GREEN
-        else:
-            badge_text = "● BACKEND: DETERMINISTIC RULE PLANNER (AUTHORITATIVE ENGINE)"
-            badge_color = Palette.GOLD_BASE
-
-        font_badge = FontManager.get_font(12, bold=True)
-        badge_s = font_badge.render(badge_text, True, badge_color)
-        surf.blit(badge_s, (self.screen_w - badge_s.get_width() - 40, 25))
-
-        st = self.governor.current_enhanced_state.classic_state
-        status_s = font_badge.render(f"YEAR {st.year} OF 10 | AGENT STATUS: {self.governor.status.value}", True, Palette.TEXT_MUTED)
-        surf.blit(status_s, (self.screen_w - status_s.get_width() - 40, 43))
-
-    def _draw_col1_mandate(self, surf: pygame.Surface) -> None:
-        # Panel 1A: Delegation Mandate
-        p1 = pygame.Rect(20, 78, 370, 330)
-        pygame.draw.rect(surf, Palette.PANEL_BG, p1, border_radius=6)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, p1, width=1, border_radius=6)
-
-        font_sec = FontManager.get_font(14, bold=True)
-        font_sm = FontManager.get_font(11)
-
-        lbl = font_sec.render("1. ASSIGN DELEGATION MANDATE", True, Palette.GOLD_PALE)
-        surf.blit(lbl, (32, 88))
+        # Tab buttons
+        for btn in self.tab_buttons:
+            if btn.handle_event(event, mouse_pos):
+                return
 
         # Goal buttons
         for btn in self.goal_buttons:
-            btn.draw(surf)
+            if btn.handle_event(event, mouse_pos):
+                return
 
-        # Goal description text
-        desc_rect = pygame.Rect(32, 160, 346, 46)
-        pygame.draw.rect(surf, (12, 18, 32), desc_rect, border_radius=4)
-        words = self.selected_goal.split(" ")
-        line1 = " ".join(words[:6])
-        line2 = " ".join(words[6:])
-        s1 = font_sm.render(line1, True, Palette.TEXT_BODY)
-        s2 = font_sm.render(line2, True, Palette.TEXT_MUTED)
-        surf.blit(s1, (38, 165))
-        surf.blit(s2, (38, 182))
+        # Turns steppers
+        if self.btn_turns_minus.handle_event(event, mouse_pos):
+            return
+        if self.btn_turns_plus.handle_event(event, mouse_pos):
+            return
 
-        # Turns selector label
-        lbl_turns = font_sm.render(f"Delegation Limit: {self.turns_to_delegate} Years", True, Palette.GOLD_LIGHT)
-        surf.blit(lbl_turns, (32, 222))
-        self.btn_turns_minus.draw(surf)
-        turns_val_s = font_sec.render(f"{self.turns_to_delegate}", True, Palette.TEXT_TITLE)
-        surf.blit(turns_val_s, (250, 220))
-        self.btn_turns_plus.draw(surf)
+        # Actions
+        if self.btn_step_turn.handle_event(event, mouse_pos):
+            return
+        if self.btn_run_all.handle_event(event, mouse_pos):
+            return
+        if self.btn_revoke.handle_event(event, mouse_pos):
+            return
+        if self.btn_return.handle_event(event, mouse_pos):
+            return
 
-        # Control buttons
-        self.btn_step_turn.draw(surf)
-        self.btn_run_all.draw(surf)
-        self.btn_revoke.draw(surf)
+    def update(self, dt: float) -> None:
+        for btn in self.goal_buttons:
+            btn.update(dt)
+        for btn in self.tab_buttons:
+            btn.update(dt)
+        self.btn_turns_minus.update(dt)
+        self.btn_turns_plus.update(dt)
+        self.btn_step_turn.update(dt)
+        self.btn_run_all.update(dt)
+        self.btn_revoke.update(dt)
+        self.btn_return.update(dt)
+        self.custom_mandate_input.update(dt)
 
-        # Panel 1B: Real Game State Observations
-        p2 = pygame.Rect(20, 418, 370, 230)
-        pygame.draw.rect(surf, Palette.PANEL_BG, p2, border_radius=6)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, p2, width=1, border_radius=6)
+    def draw(self, surface: pygame.Surface) -> None:
+        surface.fill(Palette.SAPPHIRE_DARK)
 
-        lbl2 = font_sec.render("2. REAL GAME-STATE OBSERVATIONS", True, Palette.GOLD_PALE)
-        surf.blit(lbl2, (32, 428))
+        # Header Banner
+        pygame.draw.rect(surface, Palette.SAPPHIRE_BASE, (0, 0, self.screen_w, 65))
+        pygame.draw.line(surface, Palette.PANEL_BORDER, (0, 65), (self.screen_w, 65), 1)
 
+        title_surf = FontManager.title(22).render("AI ROYAL GOVERNOR — AUTONOMOUS COMMAND DASHBOARD", True, Palette.GOLD_METALLIC)
+        surface.blit(title_surf, (30, 18))
+
+        backend_text = f"Backend: {self.governor.backend_name}"
+        b_surf = FontManager.small(12).render(backend_text, True, Palette.TEXT_MUTED)
+        surface.blit(b_surf, (self.screen_w - b_surf.get_width() - 30, 24))
+
+        # Left Column Panel (Delegation & Mandates)
+        pygame.draw.rect(surface, Palette.SAPPHIRE_BASE, (20, 75, 370, 630), border_radius=8)
+        pygame.draw.rect(surface, Palette.PANEL_BORDER, (20, 75, 370, 630), width=1, border_radius=8)
+
+        # Mandates title
+        lbl = FontManager.bold(13).render("SELECT OR TYPE ROYAL MANDATE:", True, Palette.GOLD_METALLIC)
+        surface.blit(lbl, (30, 80))
+
+        # Draw Goal Buttons
+        for btn in self.goal_buttons:
+            btn.draw(surface)
+
+        # Custom mandate input
+        self.custom_mandate_input.draw(surface)
+
+        # Duration Stepper
+        lbl_dur = FontManager.regular(12).render("DELEGATION DURATION:", True, Palette.TEXT_TITLE)
+        surface.blit(lbl_dur, (30, 258))
+
+        self.btn_turns_minus.draw(surface)
+        turns_surf = FontManager.bold(14).render(f"{self.turns_to_delegate} YRS", True, Palette.GOLD_METALLIC)
+        surface.blit(turns_surf, (240, 256))
+        self.btn_turns_plus.draw(surface)
+
+        # Action Buttons
+        self.btn_step_turn.draw(surface)
+        self.btn_run_all.draw(surface)
+        self.btn_revoke.draw(surface)
+        self.btn_return.draw(surface)
+
+        # Status Message Box
+        pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (30, 430, 350, 100), border_radius=6)
+        pygame.draw.rect(surface, Palette.PANEL_BORDER, (30, 430, 350, 100), width=1, border_radius=6)
+        s_title = FontManager.bold(11).render("GOVERNOR DISPATCH:", True, Palette.TEXT_MUTED)
+        surface.blit(s_title, (40, 438))
+        self._draw_multiline_text(surface, self.status_message, (40, 458), 330, 12, Palette.TEXT_BODY)
+
+        # Draw Tabs
+        for btn in self.tab_buttons:
+            btn.draw(surface)
+
+        # Main Display Area (Right panel)
+        content_rect = pygame.Rect(410, 115, 840, 590)
+        pygame.draw.rect(surface, Palette.SAPPHIRE_BASE, content_rect, border_radius=8)
+        pygame.draw.rect(surface, Palette.PANEL_BORDER, content_rect, width=1, border_radius=8)
+
+        if self.current_tab == "OVERVIEW":
+            self._draw_overview_tab(surface, content_rect)
+        elif self.current_tab == "INTELLIGENCE":
+            self._draw_intelligence_tab(surface, content_rect)
+        elif self.current_tab == "COGNITIVE LOG":
+            self._draw_cognitive_log_tab(surface, content_rect)
+        elif self.current_tab == "CHRONICLE":
+            self._draw_chronicle_tab(surface, content_rect)
+
+    def _draw_overview_tab(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
         st = self.governor.current_enhanced_state.classic_state
+
+        # Title
+        t = FontManager.bold(16).render("LIVE KINGDOM STATUS & FOOD SECURITY", True, Palette.GOLD_METALLIC)
+        surface.blit(t, (rect.x + 20, rect.y + 15))
+
+        # Metrics cards
         metrics = [
-            ("Current Year:", f"Year {st.year} of 10"),
-            ("Living Citizens:", f"{st.population:,} people"),
-            ("Grain in Silos:", f"{st.bushels:,} bushels"),
-            ("Kingdom Land:", f"{st.acres:,} acres"),
-            ("Land Market Price:", f"{st.land_price} bu / acre"),
-            ("Last Harvest Yield:", f"{st.harvest_yield} bu / acre"),
-            ("Rats Loss (Last Turn):", f"{st.rats_ate:,} bushels"),
-            ("Food Security:", f"{st.bushels / max(1, st.population * 20):.2f} years of food"),
+            ("Current Year", f"Year {st.year} / 10", Palette.GOLD_METALLIC),
+            ("Population", f"{st.population} citizens", Palette.TEXT_TITLE),
+            ("Grain in Silos", f"{st.bushels} bushels", Palette.GOLD_METALLIC),
+            ("Land Owned", f"{st.acres} acres", Palette.TEXT_TITLE),
+            ("Land Price", f"{st.land_price} bu/acre", Palette.TEXT_BODY),
+            ("Royal Treasury", f"{getattr(st, 'treasury_gold', 0)} gold", Palette.GOLD_METALLIC),
+            ("Royal Guard", f"{getattr(st, 'soldiers', 0)} soldiers", Palette.TEXT_TITLE),
+            ("Military Power", f"{getattr(st, 'military_strength', 0)} rating", Palette.CRIMSON_LIGHT),
         ]
 
-        for i, (k, v) in enumerate(metrics):
-            y_pos = 452 + i * 21
-            sk = font_sm.render(k, True, Palette.TEXT_MUTED)
-            sv = font_sm.render(v, True, Palette.TEXT_TITLE)
-            surf.blit(sk, (32, y_pos))
-            surf.blit(sv, (220, y_pos))
+        for i, (title, val, col) in enumerate(metrics):
+            rx = rect.x + 20 + (i % 4) * 195
+            ry = rect.y + 50 + (i // 4) * 65
+            pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rx, ry, 185, 55), border_radius=6)
+            pygame.draw.rect(surface, Palette.PANEL_BORDER, (rx, ry, 185, 55), width=1, border_radius=6)
+            surface.blit(FontManager.small(11).render(title, True, Palette.TEXT_MUTED), (rx + 10, ry + 8))
+            surface.blit(FontManager.bold(14).render(val, True, col), (rx + 10, ry + 26))
 
-        self.btn_return.draw(surf)
+        # Before & After Deltas Table
+        ty = rect.y + 195
+        surface.blit(FontManager.bold(14).render("PREVIOUS TURN RESOURCE DELTAS & VERIFICATION", True, Palette.GOLD_METALLIC), (rect.x + 20, ty))
 
-    def _draw_col2_reasoning(self, surf: pygame.Surface) -> None:
-        p = pygame.Rect(405, 78, 430, 570)
-        pygame.draw.rect(surf, Palette.PANEL_BG, p, border_radius=6)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, p, width=1, border_radius=6)
+        if self.last_record:
+            rec = self.last_record
+            table_y = ty + 30
+            pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rect.x + 20, table_y, 800, 140), border_radius=6)
+            pygame.draw.rect(surface, Palette.PANEL_BORDER, (rect.x + 20, table_y, 800, 140), width=1, border_radius=6)
 
-        font_sec = FontManager.get_font(14, bold=True)
-        font_sm = FontManager.get_font(11)
-        font_mono = FontManager.get_font(11)
+            headers = ["Resource", "Before Turn", "Decreed Orders", "After Turn", "Delta"]
+            for h_idx, h in enumerate(headers):
+                surface.blit(FontManager.bold(12).render(h, True, Palette.TEXT_MUTED), (rect.x + 40 + h_idx * 155, table_y + 12))
 
-        lbl = font_sec.render("3. REASONING & AUTHORITATIVE TOOL CALLS", True, Palette.GOLD_PALE)
-        surf.blit(lbl, (420, 88))
-
-        if self.last_record is None:
-            prompt_rect = pygame.Rect(420, 115, 400, 515)
-            pygame.draw.rect(surf, (12, 18, 32), prompt_rect, border_radius=4)
-            msg1 = font_sm.render("No autonomous turns executed yet in this session.", True, Palette.TEXT_MUTED)
-            msg2 = font_sm.render("Click [▶ DELEGATE 1 TURN] to observe the complete cycle:", True, Palette.GOLD_LIGHT)
-            steps = [
-                "1. Observe real game engine state & inspect threats",
-                "2. Reason about resource constraints against the mandate",
-                "3. Call calculate_grain_requirements() & manage_land()",
-                "4. Validate proposed decrees through game rules",
-                "5. Advance turn authoritative engine (step_enhanced_year)",
-                "6. Verify real outcome & calculate resource deltas",
+            rows = [
+                ("Grain Bushels", f"{rec.before_resources.get('bushels', 0)}", f"Feed: {rec.planned_actions.get('feed_bushels', 0)}", f"{rec.after_resources.get('bushels', 0)}", f"{rec.resource_deltas.get('bushels', 0):+d}"),
+                ("Farmland Acres", f"{rec.before_resources.get('acres', 0)}", f"Plant: {rec.planned_actions.get('plant_acres', 0)}", f"{rec.after_resources.get('acres', 0)}", f"{rec.resource_deltas.get('acres', 0):+d}"),
+                ("Citizens", f"{rec.before_resources.get('population', 0)}", f"Starved: {rec.execution_result.get('events', {}).get('starved_this_year', 0)}", f"{rec.after_resources.get('population', 0)}", f"{rec.resource_deltas.get('population', 0):+d}"),
+                ("Soldiers", f"{rec.before_resources.get('soldiers', 0)}", f"Recruit: {rec.planned_actions.get('recruit_soldiers', 0)}", f"{rec.after_resources.get('soldiers', 0)}", f"{rec.resource_deltas.get('soldiers', 0):+d}"),
             ]
-            surf.blit(msg1, (435, 140))
-            surf.blit(msg2, (435, 170))
-            for i, step in enumerate(steps):
-                ss = font_sm.render(step, True, Palette.TEXT_BODY)
-                surf.blit(ss, (445, 205 + i * 26))
+
+            for r_idx, r in enumerate(rows):
+                ry = table_y + 38 + r_idx * 24
+                for c_idx, val in enumerate(r):
+                    col = Palette.SUCCESS_GREEN if "+" in val and c_idx == 4 else (Palette.CRIMSON_LIGHT if "-" in val and c_idx == 4 else Palette.TEXT_BODY)
+                    surface.blit(FontManager.regular(12).render(val, True, col), (rect.x + 40 + c_idx * 155, ry))
+
+            # Verification badge
+            v_badge = "VERIFIED SAFE" if rec.verification_ok else "VERIFICATION WARNING"
+            v_col = Palette.SUCCESS_GREEN if rec.verification_ok else Palette.CRIMSON_LIGHT
+            surface.blit(FontManager.bold(12).render(f"STATUS: {v_badge}", True, v_col), (rect.x + 20, table_y + 155))
+            surface.blit(FontManager.regular(12).render(rec.verification, True, Palette.TEXT_BODY), (rect.x + 200, table_y + 155))
+        else:
+            surface.blit(FontManager.regular(12).render("No autonomous turn has run yet this session. Assign mandate to begin.", True, Palette.TEXT_MUTED), (rect.x + 20, ty + 40))
+
+    def _draw_intelligence_tab(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        t = FontManager.bold(16).render("REGIONAL INTELLIGENCE & RIVAL KINGDOMS", True, Palette.GOLD_METALLIC)
+        surface.blit(t, (rect.x + 20, rect.y + 15))
+
+        rivals = getattr(self.governor.current_enhanced_state, "rivals", []) or []
+        diplomacy = getattr(self.governor.current_enhanced_state, "diplomacy", []) or []
+
+        for idx, rival in enumerate(rivals):
+            ry = rect.y + 50 + idx * 165
+            pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rect.x + 20, ry, 800, 150), border_radius=6)
+            pygame.draw.rect(surface, Palette.PANEL_BORDER, (rect.x + 20, ry, 800, 150), width=1, border_radius=6)
+
+            rel = next((d for d in diplomacy if d.rival_id == rival.id), None)
+            status_str = rel.status if rel else "NEUTRAL"
+            opinion_val = rel.opinion if rel else 50
+
+            # Title
+            surface.blit(FontManager.bold(15).render(f"{rival.name.upper()} — Ruler: {rival.leader}", True, Palette.GOLD_METALLIC), (rect.x + 35, ry + 12))
+            surface.blit(FontManager.small(11).render(f"Personality: {rival.personality}", True, Palette.TEXT_MUTED), (rect.x + 400, ry + 15))
+
+            # Details
+            details = [
+                f"Population: {rival.population} citizens",
+                f"Farmland: {rival.acres} acres",
+                f"Grain Reserves: {rival.bushels} bushels",
+                f"Royal Treasury: {rival.treasury} gold",
+                f"Soldiers Garrison: {rival.soldiers} troops",
+                f"Military Power: {rival.military_strength} combat rating",
+            ]
+
+            for d_idx, d_txt in enumerate(details):
+                col = d_idx % 2
+                row = d_idx // 2
+                surface.blit(FontManager.regular(12).render(d_txt, True, Palette.TEXT_BODY), (rect.x + 35 + col * 260, ry + 42 + row * 22))
+
+            # Diplomatic status pill
+            pill_col = Palette.SUCCESS_GREEN if status_str in ("TRADE", "ALLY") else (Palette.CRIMSON_LIGHT if status_str in ("HOSTILE", "WAR") else Palette.TEXT_TITLE)
+            pygame.draw.rect(surface, Palette.SAPPHIRE_LIGHT, (rect.x + 580, ry + 40, 210, 80), border_radius=6)
+            surface.blit(FontManager.bold(12).render("DIPLOMATIC STANDING:", True, Palette.TEXT_MUTED), (rect.x + 595, ry + 50))
+            surface.blit(FontManager.bold(14).render(status_str, True, pill_col), (rect.x + 595, ry + 70))
+            surface.blit(FontManager.regular(11).render(f"Opinion Index: {opinion_val}/100", True, Palette.TEXT_BODY), (rect.x + 595, ry + 95))
+
+    def _draw_cognitive_log_tab(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        t = FontManager.bold(16).render("GOVERNOR REASONING & TOOL EXECUTION LOG", True, Palette.GOLD_METALLIC)
+        surface.blit(t, (rect.x + 20, rect.y + 15))
+
+        if not self.last_record:
+            surface.blit(FontManager.regular(12).render("No autonomous turn has run yet. Assign a mandate to review reasoning.", True, Palette.TEXT_MUTED), (rect.x + 20, rect.y + 55))
             return
 
         rec = self.last_record
 
-        # 1. Goal banner
-        goal_s = font_sm.render(f"Mandate: {rec.goal[:45]}...", True, Palette.GOLD_LIGHT)
-        surf.blit(goal_s, (420, 115))
+        # Observation Box
+        y = rect.y + 45
+        pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rect.x + 20, y, 800, 120), border_radius=6)
+        pygame.draw.rect(surface, Palette.PANEL_BORDER, (rect.x + 20, y, 800, 120), width=1, border_radius=6)
+        surface.blit(FontManager.bold(12).render("1. OBSERVE & STRATEGIC MEMORY:", True, Palette.GOLD_METALLIC), (rect.x + 30, y + 8))
 
-        # 2. Reasoning Box
-        box_r = pygame.Rect(420, 135, 400, 140)
-        pygame.draw.rect(surf, (12, 18, 30), box_r, border_radius=4)
-        pygame.draw.rect(surf, Palette.LAPIS_BASE, box_r, width=1, border_radius=4)
+        obs_text = (
+            f"Mandate: {rec.goal}\n"
+            f"Famine Threat: {rec.disaster_check.get('famine', {}).get('level')} — {rec.disaster_check.get('famine', {}).get('detail')}\n"
+            f"Tool Execution Pipeline: {' -> '.join(rec.tool_calls)}"
+        )
+        self._draw_multiline_text(surface, obs_text, (rect.x + 30, y + 28), 770, 12, Palette.TEXT_BODY)
 
-        box_hdr = font_sm.render("AI Cognitive Reasoning:", True, Palette.GOLD_PALE)
-        surf.blit(box_hdr, (428, 140))
+        # Reasoning Box
+        y += 135
+        pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rect.x + 20, y, 800, 240), border_radius=6)
+        pygame.draw.rect(surface, Palette.PANEL_BORDER, (rect.x + 20, y, 800, 240), width=1, border_radius=6)
+        surface.blit(FontManager.bold(12).render(f"2. COGNITIVE REASONING ({rec.backend_used}):", True, Palette.GOLD_METALLIC), (rect.x + 30, y + 8))
+        self._draw_multiline_text(surface, rec.reasoning, (rect.x + 30, y + 30), 770, 12, Palette.TEXT_BODY)
 
-        lines = rec.reasoning.split("\n")
-        y_text = 158
-        for line in lines[:6]:
-            if line.strip():
-                ls = font_sm.render(line[:54], True, Palette.TEXT_BODY)
-                surf.blit(ls, (428, y_text))
-                y_text += 18
+        # Verification Box
+        y += 255
+        pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rect.x + 20, y, 800, 110), border_radius=6)
+        pygame.draw.rect(surface, Palette.PANEL_BORDER, (rect.x + 20, y, 800, 110), width=1, border_radius=6)
+        surface.blit(FontManager.bold(12).render("3. OUTCOME VERIFICATION & RESOURCE DELTAS:", True, Palette.GOLD_METALLIC), (rect.x + 30, y + 8))
+        v_text = f"{rec.verification}\nReplan Status: {'Auto-Replanned to avoid constraint violation' if rec.replanned else 'Passed first-pass validation'}"
+        self._draw_multiline_text(surface, v_text, (rect.x + 30, y + 30), 770, 12, Palette.TEXT_BODY)
 
-        # 3. Tool Calls Sequence Box
-        tool_hdr = font_sec.render("Game Engine Tool Executions:", True, Palette.GOLD_PALE)
-        surf.blit(tool_hdr, (420, 285))
+    def _draw_chronicle_tab(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        t = FontManager.bold(16).render("CHRONICLE OF BABYLON — HISTORICAL TRENDS", True, Palette.GOLD_METALLIC)
+        surface.blit(t, (rect.x + 20, rect.y + 15))
 
-        tool_box = pygame.Rect(420, 308, 400, 130)
-        pygame.draw.rect(surf, (10, 15, 26), tool_box, border_radius=4)
-        pygame.draw.rect(surf, (40, 60, 90), tool_box, width=1, border_radius=4)
-
-        for i, tool_name in enumerate(rec.tool_calls):
-            y_t = 316 + i * 20
-            t_s = font_mono.render(f"[{i+1}] {tool_name}() -> AUTHORITATIVE OK", True, Palette.TURQUOISE_ACCENT)
-            surf.blit(t_s, (428, y_t))
-
-        # 4. Planned & Validated Decrees
-        dec_hdr = font_sec.render("Executed Decrees (Validated):", True, Palette.GOLD_PALE)
-        surf.blit(dec_hdr, (420, 448))
-
-        dec_box = pygame.Rect(420, 470, 400, 85)
-        pygame.draw.rect(surf, (12, 18, 30), dec_box, border_radius=4)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, dec_box, width=1, border_radius=4)
-
-        p_act = rec.planned_actions
-        d_lines = [
-            f"• FEED CITIZENS:  {p_act.get('feed_bushels', 0):,} bushels ({p_act.get('feed_bushels', 0)//20} fed)",
-            f"• CULTIVATE SEED: {p_act.get('plant_acres', 0):,} acres ({p_act.get('plant_acres', 0)//2} bu seed)",
-            f"• LAND PURCHASE:  {p_act.get('buy_acres', 0):,} acres (Cost: {p_act.get('buy_acres', 0) * rec.game_year} bu)",
-            f"• LAND SALE:      {p_act.get('sell_acres', 0):,} acres",
-        ]
-        for i, dl in enumerate(d_lines):
-            ds = font_sm.render(dl, True, Palette.TEXT_TITLE)
-            surf.blit(ds, (428, 477 + i * 18))
-
-        # Replan alert if triggered
-        if rec.replanned:
-            rep_s = font_sm.render(f"⚠️ REPLANNED: {rec.replan_reason[:45]}", True, Palette.CRIMSON_LIGHT)
-            surf.blit(rep_s, (420, 562))
-
-    def _draw_col3_deltas(self, surf: pygame.Surface) -> None:
-        p = pygame.Rect(850, 78, 410, 570)
-        pygame.draw.rect(surf, Palette.PANEL_BG, p, border_radius=6)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, p, width=1, border_radius=6)
-
-        font_sec = FontManager.get_font(14, bold=True)
-        font_sm = FontManager.get_font(11)
-        font_badge = FontManager.get_font(12, bold=True)
-
-        lbl = font_sec.render("4. VERIFICATION & RESOURCE DELTAS", True, Palette.GOLD_PALE)
-        surf.blit(lbl, (865, 88))
-
-        if self.last_record is None:
-            empty_r = pygame.Rect(865, 115, 380, 515)
-            pygame.draw.rect(surf, (12, 18, 32), empty_r, border_radius=4)
-            s_empty = font_sm.render("Awaiting first delegated turn execution...", True, Palette.TEXT_MUTED)
-            surf.blit(s_empty, (880, 140))
+        chronicle = getattr(self.governor.current_enhanced_state, "chronicle", []) or []
+        if not chronicle:
+            surface.blit(FontManager.regular(12).render("The chronicle begins in Year 1. Advance turns to record history.", True, Palette.TEXT_MUTED), (rect.x + 20, rect.y + 55))
             return
 
-        rec = self.last_record
+        headers = ["Year", "Population", "Starved", "Immigrants", "Harvest Yield", "Rats Ate", "Bushels", "Acres"]
+        table_y = rect.y + 50
+        pygame.draw.rect(surface, Palette.SAPPHIRE_DARK, (rect.x + 20, table_y, 800, 35), border_radius=4)
+        for h_idx, h in enumerate(headers):
+            surface.blit(FontManager.bold(12).render(h, True, Palette.GOLD_METALLIC), (rect.x + 30 + h_idx * 95, table_y + 10))
 
-        # Verification Banner
-        ver_col = Palette.SUCCESS_GREEN if rec.verification_ok else Palette.CRIMSON
-        ver_r = pygame.Rect(865, 115, 380, 36)
-        pygame.draw.rect(surf, ver_col, ver_r, border_radius=4)
-        ver_label = "✅ GOAL VERIFIED: SUCCESS" if rec.verification_ok else "⚠️ GOAL VERIFIED: PARTIAL / ATTENTION"
-        v_s = font_badge.render(ver_label, True, Palette.TEXT_DARK)
-        surf.blit(v_s, (875, 124))
+        for idx, entry in enumerate(chronicle[-12:]):
+            row_y = table_y + 40 + idx * 32
+            vals = [
+                f"Year {entry.year}",
+                f"{entry.population_end}",
+                f"{entry.starved}",
+                f"+{entry.immigrants}",
+                f"{entry.yield_rate} bu/ac",
+                f"{entry.rats_ate} bu",
+                f"{entry.bushels}",
+                f"{entry.acres}",
+            ]
+            for c_idx, val in enumerate(vals):
+                col = Palette.CRIMSON_LIGHT if c_idx == 2 and entry.starved > 0 else Palette.TEXT_BODY
+                surface.blit(FontManager.regular(12).render(val, True, col), (rect.x + 30 + c_idx * 95, row_y + 8))
 
-        v_detail = font_sm.render(rec.verification[:54], True, Palette.TEXT_TITLE)
-        surf.blit(v_detail, (865, 156))
+    def _draw_multiline_text(
+        self,
+        surface: pygame.Surface,
+        text: str,
+        pos: Tuple[int, int],
+        max_width: int,
+        font_size: int,
+        color: Tuple[int, int, int],
+    ) -> None:
+        font = FontManager.regular(font_size)
+        x, y = pos
+        line_height = font.get_height() + 3
 
-        # Before / After Resource Proof Table
-        tbl_hdr = font_sec.render("Before / After Resource Proof:", True, Palette.GOLD_PALE)
-        surf.blit(tbl_hdr, (865, 180))
-
-        tbl_r = pygame.Rect(865, 202, 380, 115)
-        pygame.draw.rect(surf, (12, 18, 30), tbl_r, border_radius=4)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, tbl_r, width=1, border_radius=4)
-
-        cols = ["Resource", "Before", "After", "Delta"]
-        x_offsets = [875, 960, 1040, 1130]
-        for x, c in zip(x_offsets, cols):
-            cs = font_sm.render(c, True, Palette.GOLD_LIGHT)
-            surf.blit(cs, (x, 208))
-
-        pygame.draw.line(surf, Palette.PANEL_BORDER, (865, 226), (1245, 226), 1)
-
-        rows = [
-            ("Population", rec.before_resources["population"], rec.after_resources["population"], rec.resource_deltas["population"]),
-            ("Grain (bu)", rec.before_resources["bushels"], rec.after_resources["bushels"], rec.resource_deltas["bushels"]),
-            ("Land (ac)", rec.before_resources["acres"], rec.after_resources["acres"], rec.resource_deltas["acres"]),
-        ]
-
-        for i, (name, bef, aft, dlt) in enumerate(rows):
-            y_r = 234 + i * 24
-            d_str = f"+{dlt:,}" if dlt > 0 else f"{dlt:,}"
-            d_col = Palette.SUCCESS_GREEN if dlt > 0 else (Palette.CRIMSON_LIGHT if dlt < 0 else Palette.TEXT_MUTED)
-
-            surf.blit(font_sm.render(name, True, Palette.TEXT_BODY), (x_offsets[0], y_r))
-            surf.blit(font_sm.render(f"{bef:,}", True, Palette.TEXT_MUTED), (x_offsets[1], y_r))
-            surf.blit(font_sm.render(f"{aft:,}", True, Palette.TEXT_TITLE), (x_offsets[2], y_r))
-            surf.blit(font_sm.render(d_str, True, d_col), (x_offsets[3], y_r))
-
-        # Event Consequences
-        ev = rec.execution_result.get("events", {})
-        ev_lines = [
-            f"• Harvest Yield:    {ev.get('harvest_yield', 0)} bu/ac (Total: {ev.get('total_harvested', 0):,} bu)",
-            f"• Grain Eaten by Rats: {ev.get('grain_eaten_by_rats', 0):,} bu",
-            f"• Immigrants Arrived:  +{ev.get('immigrants_arrived', 0):,} newcomers",
-            f"• Starvation Deaths:   {ev.get('starved_this_year', 0):,} citizens",
-        ]
-        for i, el in enumerate(ev_lines):
-            surf.blit(font_sm.render(el, True, Palette.TEXT_BODY), (865, 328 + i * 19))
-
-        # Turn History Log (Bottom)
-        hist_hdr = font_sec.render(f"Delegation Chronicle ({len(self.action_history)} Turns):", True, Palette.GOLD_PALE)
-        surf.blit(hist_hdr, (865, 415))
-
-        hist_box = pygame.Rect(865, 436, 380, 200)
-        pygame.draw.rect(surf, (10, 15, 26), hist_box, border_radius=4)
-        pygame.draw.rect(surf, (40, 60, 90), hist_box, width=1, border_radius=4)
-
-        for i, item in enumerate(self.action_history[-7:]):
-            y_h = 444 + i * 26
-            act = item.planned_actions
-            h_str = (
-                f"Y{item.game_year}: Feed={act.get('feed_bushels', 0):,} Plant={act.get('plant_acres', 0):,} "
-                f"-> Pop:{item.after_resources['population']} Grain:{item.after_resources['bushels']:,}"
-            )
-            surf.blit(font_sm.render(h_str, True, Palette.TEXT_BODY), (875, y_h))
-
-    def _draw_footer(self, surf: pygame.Surface) -> None:
-        ftr_rect = pygame.Rect(20, 656, self.screen_w - 40, 48)
-        pygame.draw.rect(surf, (12, 18, 30), ftr_rect, border_radius=4)
-        pygame.draw.rect(surf, Palette.PANEL_BORDER, ftr_rect, width=1, border_radius=4)
-
-        font_sm = FontManager.get_font(12)
-        s_msg = font_sm.render(f"STATUS: {self.status_message}", True, Palette.GOLD_PALE)
-        surf.blit(s_msg, (400, 672))
-
-        font_hint = FontManager.get_font(11)
-        h_msg = font_hint.render("[Space] Delegate 1 Turn | [R] Revoke Control | [Esc] Kingdom Menu", True, Palette.TEXT_MUTED)
-        surf.blit(h_msg, (self.screen_w - h_msg.get_width() - 40, 672))
+        for paragraph in text.split("\n"):
+            words = paragraph.split(" ")
+            current_line = ""
+            for word in words:
+                test_line = f"{current_line} {word}".strip()
+                if font.size(test_line)[0] <= max_width:
+                    current_line = test_line
+                else:
+                    surface.blit(font.render(current_line, True, color), (x, y))
+                    y += line_height
+                    current_line = word
+            if current_line:
+                surface.blit(font.render(current_line, True, color), (x, y))
+                y += line_height

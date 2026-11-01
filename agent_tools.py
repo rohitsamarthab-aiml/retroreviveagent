@@ -66,6 +66,11 @@ def _state_to_dict(state: GameState) -> Dict[str, Any]:
         "plague_risk_next_year": state.plague_next_year,
         "game_is_over": state.is_over,
         "game_over_reason": state.game_over_reason,
+        "soldiers": getattr(state, "soldiers", 0),
+        "military_strength": getattr(state, "military_strength", 0),
+        "treasury_gold": getattr(state, "treasury_gold", 0),
+        "defense_level": getattr(state, "defense_level", 0),
+        "territory_influence": getattr(state, "territory_influence", 1.0),
     }
 
 
@@ -87,10 +92,27 @@ def inspect_kingdom_state(enhanced: EnhancedGameState) -> ToolResult:
     labor_capacity   = state.population * 10   # max acres that can be farmed
     seed_for_all     = state.acres // 2         # bushels needed to plant all land
 
+    rivals_data = []
+    if hasattr(enhanced, "rivals") and enhanced.rivals:
+        for r in enhanced.rivals:
+            rel = next((d for d in (enhanced.diplomacy or []) if d.rival_id == r.id), None)
+            rivals_data.append({
+                "id": r.id,
+                "name": r.name,
+                "leader": r.leader,
+                "population": r.population,
+                "military_strength": r.military_strength,
+                "soldiers": r.soldiers,
+                "personality": r.personality,
+                "status": rel.status if rel else "NEUTRAL",
+                "opinion": rel.opinion if rel else 50,
+            })
+
     return {
         "tool": "inspect_kingdom_state",
         "success": True,
         "state": state_dict,
+        "rival_kingdoms": rivals_data,
         "analytics": {
             "grain_per_person_bushels": round(grain_per_person, 1),
             "food_security_years": round(years_of_food, 2),
@@ -377,6 +399,9 @@ def advance_kingdom_turn(
     sell_acres: int = 0,
     feed_bushels: int = 0,
     plant_acres: int = 0,
+    recruit_soldiers: int = 0,
+    train_soldiers_cost: int = 0,
+    buy_fortifications: int = 0,
     rng=None,
 ) -> tuple[EnhancedGameState, ToolResult]:
     """
@@ -418,6 +443,9 @@ def advance_kingdom_turn(
         sell_acres=sell_acres,
         feed_bushels=feed_bushels,
         plant_acres=plant_acres,
+        recruit_soldiers=recruit_soldiers,
+        train_soldiers_cost=train_soldiers_cost,
+        buy_fortifications=buy_fortifications,
     )
     new_enhanced = step_enhanced_year(enhanced, decisions, rng=rng)
     after_state  = new_enhanced.classic_state
@@ -428,10 +456,13 @@ def advance_kingdom_turn(
         "success": True,
         "year_processed": before_state.year,
         "decisions_executed": {
-            "buy_acres":     buy_acres,
-            "sell_acres":    sell_acres,
-            "feed_bushels":  feed_bushels,
-            "plant_acres":   plant_acres,
+            "buy_acres":           buy_acres,
+            "sell_acres":          sell_acres,
+            "feed_bushels":        feed_bushels,
+            "plant_acres":         plant_acres,
+            "recruit_soldiers":    recruit_soldiers,
+            "train_soldiers_cost": train_soldiers_cost,
+            "buy_fortifications":  buy_fortifications,
         },
         "before": {
             "year":       before_state.year,
@@ -608,3 +639,215 @@ def get_chronicle_summary(enhanced: EnhancedGameState) -> ToolResult:
         "history": entries,
     }
 
+
+
+# ---------------------------------------------------------------------------
+# TOOL 11: inspect_rival_kingdoms
+# ---------------------------------------------------------------------------
+def inspect_rival_kingdoms(enhanced: EnhancedGameState) -> ToolResult:
+    """Return diplomatic, military, and status data for all regional rival kingdoms."""
+    data = []
+    for r in (getattr(enhanced, "rivals", []) or []):
+        rel = next((d for d in (getattr(enhanced, "diplomacy", []) or []) if d.rival_id == r.id), None)
+        data.append({
+            "id": r.id,
+            "name": r.name,
+            "leader": r.leader,
+            "status": rel.status if rel else "NEUTRAL",
+            "opinion": rel.opinion if rel else 50,
+            "strength": r.military_strength,
+            "military_strength": r.military_strength,
+            "soldiers": r.soldiers,
+            "population": r.population,
+            "acres": r.acres,
+            "treasury": r.treasury,
+            "personality": r.personality,
+        })
+    return {
+        "success": True,
+        "tool": "inspect_rival_kingdoms",
+        "rival_count": len(data),
+        "kingdoms": data,
+    }
+
+
+# ---------------------------------------------------------------------------
+# TOOL 12: scout_kingdom
+# ---------------------------------------------------------------------------
+def scout_kingdom(enhanced: EnhancedGameState, kingdom_id: str) -> ToolResult:
+    """Send scouts to gather strategic intelligence on a rival kingdom."""
+    rivals = getattr(enhanced, "rivals", []) or []
+    target = next((k for k in rivals if k.id.lower() == kingdom_id.lower() or k.name.lower() == kingdom_id.lower()), None)
+    if not target:
+        return {
+            "success": False,
+            "tool": "scout_kingdom",
+            "error": f"Kingdom '{kingdom_id}' not found.",
+        }
+
+    st = enhanced.classic_state
+    our_strength = getattr(st, "military_strength", 0)
+
+    report = {
+        "target_id": target.id,
+        "target_name": target.name,
+        "leader": target.leader,
+        "army_size": target.soldiers,
+        "military_strength": target.military_strength,
+        "treasury": target.treasury,
+        "acres": target.acres,
+        "population": target.population,
+        "personality": target.personality,
+        "confidence_level": 100,
+        "threat_level": "HIGH" if target.military_strength > our_strength else "MODERATE",
+    }
+    return {
+        "success": True,
+        "tool": "scout_kingdom",
+        "kingdom_id": target.id,
+        "intelligence_report": report,
+    }
+
+
+# ---------------------------------------------------------------------------
+# TOOL 13: evaluate_war_readiness
+# ---------------------------------------------------------------------------
+def evaluate_war_readiness(enhanced: EnhancedGameState, target_id: str) -> ToolResult:
+    """Compare Babylon's military forces with a rival and predict conflict outcomes."""
+    rivals = getattr(enhanced, "rivals", []) or []
+    target = next((k for k in rivals if k.id.lower() == target_id.lower() or k.name.lower() == target_id.lower()), None)
+    if not target:
+        return {
+            "success": False,
+            "tool": "evaluate_war_readiness",
+            "error": f"Target kingdom '{target_id}' not found.",
+        }
+
+    st = enhanced.classic_state
+    our_strength = max(1, getattr(st, "military_strength", 0))
+    their_strength = max(1, target.military_strength)
+    ratio = our_strength / their_strength
+
+    if ratio >= 1.5:
+        assessment = "DOMINANT"
+        win_prob = 0.90
+    elif ratio >= 1.1:
+        assessment = "SUPERIOR"
+        win_prob = 0.75
+    elif ratio >= 0.9:
+        assessment = "MATCHED"
+        win_prob = 0.50
+    else:
+        assessment = "INFERIOR"
+        win_prob = 0.25
+
+    return {
+        "success": True,
+        "tool": "evaluate_war_readiness",
+        "target_id": target.id,
+        "comparison": {
+            "our_strength": our_strength,
+            "their_strength": their_strength,
+            "ratio": round(ratio, 2),
+            "strategic_assessment": assessment,
+            "win_probability": win_prob,
+            "recommendation": "Maintain superiority and consider assertion of dominance" if ratio >= 1.1 else ("Bolster defenses and train troops" if ratio < 0.9 else "Even match; cautious balance advised"),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# TOOL 14: manage_military
+# ---------------------------------------------------------------------------
+def manage_military(
+    enhanced: EnhancedGameState,
+    recruit: int = 0,
+    train_budget: int = 0,
+    build_defense: int = 0,
+) -> ToolResult:
+    """Preview or validate troop recruitment, combat training, and fortification."""
+    st = enhanced.classic_state
+    gold = getattr(st, "treasury_gold", 0)
+    bushels = st.bushels
+
+    grain_cost = recruit * 10
+    gold_cost = recruit * 20 + train_budget + build_defense * 50
+    can_afford = (bushels >= grain_cost) and (gold >= gold_cost)
+
+    current_soldiers = getattr(st, "soldiers", 0)
+    current_defense = getattr(st, "defense_level", 0)
+    proj_soldiers = current_soldiers + recruit
+    proj_defense = current_defense + build_defense
+    proj_strength = int(proj_soldiers * (1.0 + proj_defense * 0.1))
+
+    return {
+        "success": True,
+        "tool": "manage_military",
+        "recruit": recruit,
+        "train_budget": train_budget,
+        "build_defense": build_defense,
+        "grain_cost_bushels": grain_cost,
+        "gold_cost": gold_cost,
+        "can_afford": can_afford,
+        "projected_soldiers": proj_soldiers,
+        "projected_defense_level": proj_defense,
+        "projected_military_strength": proj_strength,
+    }
+
+
+# ---------------------------------------------------------------------------
+# TOOL 15: manage_diplomacy
+# ---------------------------------------------------------------------------
+def manage_diplomacy(
+    enhanced: EnhancedGameState,
+    target_id: str,
+    proposal: str,
+    tribute_gold: int = 0,
+) -> ToolResult:
+    """Send royal envoys to negotiate trade pacts, alliances, or peace treaties."""
+    rivals = getattr(enhanced, "rivals", []) or []
+    target = next((k for k in rivals if k.id.lower() == target_id.lower() or k.name.lower() == target_id.lower()), None)
+    if not target:
+        return {
+            "success": False,
+            "tool": "manage_diplomacy",
+            "error": f"Rival kingdom '{target_id}' not found.",
+        }
+
+    diplomacy = getattr(enhanced, "diplomacy", []) or []
+    rel = next((d for d in diplomacy if d.rival_id == target.id), None)
+    current_opinion = rel.opinion if rel else 50
+    proposal_upper = proposal.upper()
+
+    opinion_boost = tribute_gold // 10
+    accepted = False
+
+    if proposal_upper == "TRADE":
+        accepted = (current_opinion >= 30) or (target.personality != "AGGRESSIVE") or (tribute_gold >= 100)
+        if accepted and rel:
+            rel.status = "TRADE"
+            rel.trade_agreement = True
+            rel.opinion = min(100, rel.opinion + 15 + opinion_boost)
+    elif proposal_upper == "ALLIANCE":
+        accepted = (current_opinion >= 60) or (tribute_gold >= 300)
+        if accepted and rel:
+            rel.status = "ALLY"
+            rel.opinion = min(100, rel.opinion + 25 + opinion_boost)
+    elif proposal_upper == "PEACE":
+        accepted = (current_opinion >= 40) or (tribute_gold >= 200) or (target.personality == "DEFENSIVE")
+        if accepted and rel:
+            rel.status = "NEUTRAL"
+            rel.opinion = min(100, rel.opinion + 20 + opinion_boost)
+    else:
+        accepted = True
+
+    final_opinion = rel.opinion if rel else (current_opinion + opinion_boost)
+    return {
+        "success": True,
+        "tool": "manage_diplomacy",
+        "target_id": target.id,
+        "proposal": proposal_upper,
+        "accepted": accepted,
+        "tribute_paid": tribute_gold,
+        "current_opinion": final_opinion,
+    }

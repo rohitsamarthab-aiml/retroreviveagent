@@ -3,6 +3,7 @@
 env/
 venv/
 ENV/
+retroreviveagent/
 
 # Python bytecode and caches
 __pycache__/

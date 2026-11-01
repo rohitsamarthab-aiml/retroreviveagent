@@ -158,6 +158,74 @@ class ChronicleEntry:
     rats_ate: int
 
 
+
+@dataclass
+class RivalKingdom:
+    """An independent regional rival kingdom simulated in real time."""
+    id: str
+    name: str
+    leader: str
+    population: int
+    bushels: int
+    acres: int
+    soldiers: int
+    military_strength: int
+    treasury: int
+    territory: float
+    land_health: float = 1.0
+    personality: str = "BALANCED"  # "AGGRESSIVE", "DEFENSIVE", "EXPANSIONIST", "BALANCED"
+
+    def simulate_turn(self, rng: Optional[RandomProvider] = None) -> None:
+        """Independently advance rival kingdom economy, agriculture, and military."""
+        from game_logic import MockRNG
+        if rng is None or isinstance(rng, MockRNG):
+            provider = DefaultRNG()
+        else:
+            provider = rng
+        needed_food = self.population * 20
+        if self.bushels >= needed_food:
+            self.bushels -= needed_food
+        else:
+            starved = (needed_food - self.bushels) // 20
+            self.population = max(10, self.population - starved)
+            self.bushels = 0
+
+        # Annual agricultural harvest
+        yield_rate = int(5 * provider()) + 1
+        harvest = self.acres * yield_rate
+        self.bushels += harvest
+
+        # Population natural growth / immigration
+        self.population += int(self.population * 0.05 * provider())
+
+        # Personality-driven military and treasury updates
+        if self.personality == "AGGRESSIVE":
+            recruit = max(2, int(self.population * 0.05))
+            self.soldiers += recruit
+            self.military_strength += int(recruit * 2.5)
+        elif self.personality == "EXPANSIONIST":
+            if self.bushels > 1000 and self.treasury > 200:
+                self.acres += 50
+                self.treasury -= 100
+            recruit = max(1, int(self.population * 0.03))
+            self.soldiers += recruit
+            self.military_strength += int(recruit * 2.0)
+        elif self.personality == "DEFENSIVE":
+            self.military_strength += int(self.soldiers * 0.1)
+
+        self.soldiers = max(5, self.soldiers)
+        self.treasury += int(self.population * 2)
+
+
+@dataclass
+class DiplomaticRelation:
+    """Diplomatic treaty and opinion between Babylon and a rival kingdom."""
+    rival_id: str
+    status: str = "NEUTRAL"  # "ALLY", "NEUTRAL", "HOSTILE", "WAR", "TRADE", "PEACE"
+    opinion: int = 50        # 0 to 100
+    trade_agreement: bool = False
+    intelligence_level: int = 0
+
 @dataclass
 class EnhancedGameState:
     """State wrapper for Enhanced Mode and Scenarios."""
@@ -168,6 +236,9 @@ class EnhancedGameState:
     chronicle: List[ChronicleEntry] = field(default_factory=list)
     scenario_status: str = "IN_PROGRESS"  # "IN_PROGRESS", "VICTORY", "DEFEAT"
     status_message: Optional[str] = None
+    rivals: List[RivalKingdom] = field(default_factory=list)
+    diplomacy: List[DiplomaticRelation] = field(default_factory=list)
+    global_events: List[str] = field(default_factory=list)
 
 
 def init_enhanced_game(
@@ -178,6 +249,17 @@ def init_enhanced_game(
 ) -> EnhancedGameState:
     """Initializes a new Enhanced Mode or Scenario session."""
     provider = rng if rng is not None else DefaultRNG()
+
+    default_rivals = [
+        RivalKingdom("elam", "Elam", "King Shutruk", 120, 2500, 1100, 30, 150, 400, 1.2, personality="AGGRESSIVE"),
+        RivalKingdom("assyria", "Assyria", "Tiglath-Pileser", 150, 3500, 1500, 50, 250, 600, 1.5, personality="EXPANSIONIST"),
+        RivalKingdom("sumer", "Ur of Sumer", "Ur-Nammu", 90, 2200, 900, 15, 80, 800, 0.9, personality="DEFENSIVE"),
+    ]
+    default_diplomacy = [
+        DiplomaticRelation("elam", status="NEUTRAL", opinion=40),
+        DiplomaticRelation("assyria", status="HOSTILE", opinion=20),
+        DiplomaticRelation("sumer", status="NEUTRAL", opinion=65),
+    ]
 
     if mode == "SCENARIO" and scenario_id in SCENARIOS:
         scen = SCENARIOS[scenario_id]
@@ -198,6 +280,11 @@ def init_enhanced_game(
             plague_next_year=False,
             is_over=False,
             game_over_reason=None,
+            soldiers=20,
+            military_strength=100,
+            treasury_gold=500,
+            defense_level=1,
+            territory_influence=1.0,
         )
         return EnhancedGameState(
             classic_state=base_state,
@@ -206,10 +293,35 @@ def init_enhanced_game(
             chronicle=[],
             scenario_status="IN_PROGRESS",
             status_message=f"Scenario Started: {scen.title} (Target: Year {scen.target_year})",
+            rivals=[RivalKingdom(**asdict(r)) for r in default_rivals],
+            diplomacy=[DiplomaticRelation(**asdict(d)) for d in default_diplomacy],
+            global_events=[],
         )
 
     # Standard Enhanced Mode (uses 10-year term with advisors and chronicle)
     base_state = init_game(rng=provider, strict_historical=strict_historical)
+    base_state = GameState(
+        year=base_state.year,
+        population=base_state.population,
+        bushels=base_state.bushels,
+        acres=base_state.acres,
+        land_price=base_state.land_price,
+        starved_this_year=base_state.starved_this_year,
+        starved_total=base_state.starved_total,
+        starved_pct_avg=base_state.starved_pct_avg,
+        immigrants_this_year=base_state.immigrants_this_year,
+        harvest_yield=base_state.harvest_yield,
+        rats_ate=base_state.rats_ate,
+        plague_struck=base_state.plague_struck,
+        plague_next_year=base_state.plague_next_year,
+        is_over=base_state.is_over,
+        game_over_reason=base_state.game_over_reason,
+        soldiers=20,
+        military_strength=100,
+        treasury_gold=500,
+        defense_level=1,
+        territory_influence=1.0,
+    )
     return EnhancedGameState(
         classic_state=base_state,
         mode="ENHANCED",
@@ -217,6 +329,9 @@ def init_enhanced_game(
         chronicle=[],
         scenario_status="IN_PROGRESS",
         status_message="Welcome, Sire. The Royal Council stands ready to assist your reign.",
+        rivals=[RivalKingdom(**asdict(r)) for r in default_rivals],
+        diplomacy=[DiplomaticRelation(**asdict(d)) for d in default_diplomacy],
+        global_events=[],
     )
 
 
@@ -348,6 +463,56 @@ def step_enhanced_year(
         strict_historical=strict_historical,
     )
 
+    # Advance rival kingdoms independently (use separate RNG if mock is used for Babylon)
+    from game_logic import MockRNG
+    provider = rng if rng is not None else DefaultRNG()
+    rival_provider = DefaultRNG() if isinstance(provider, MockRNG) else provider
+    updated_rivals: List[RivalKingdom] = []
+    for rival in (enhanced.rivals or []):
+        r_copy = RivalKingdom(**asdict(rival))
+        r_copy.simulate_turn(rival_provider)
+        updated_rivals.append(r_copy)
+
+    # Process diplomacy and trade agreements
+    updated_diplomacy: List[DiplomaticRelation] = []
+    trade_bonus_bushels = 0
+    trade_bonus_gold = 0
+    for rel in (enhanced.diplomacy or []):
+        d_copy = DiplomaticRelation(**asdict(rel))
+        if d_copy.status == "TRADE" or d_copy.trade_agreement:
+            trade_bonus_bushels += 50
+            trade_bonus_gold += 25
+        updated_diplomacy.append(d_copy)
+
+    if trade_bonus_bushels > 0 or trade_bonus_gold > 0:
+        new_state = GameState(
+            year=new_state.year,
+            population=new_state.population,
+            bushels=new_state.bushels + trade_bonus_bushels,
+            acres=new_state.acres,
+            land_price=new_state.land_price,
+            starved_this_year=new_state.starved_this_year,
+            starved_total=new_state.starved_total,
+            starved_pct_avg=new_state.starved_pct_avg,
+            immigrants_this_year=new_state.immigrants_this_year,
+            harvest_yield=new_state.harvest_yield,
+            rats_ate=new_state.rats_ate,
+            plague_struck=new_state.plague_struck,
+            plague_next_year=new_state.plague_next_year,
+            is_over=new_state.is_over,
+            game_over_reason=new_state.game_over_reason,
+            soldiers=new_state.soldiers,
+            military_strength=new_state.military_strength,
+            treasury_gold=new_state.treasury_gold + trade_bonus_gold,
+            defense_level=new_state.defense_level,
+            territory_influence=new_state.territory_influence,
+        )
+
+    # Regional events
+    updated_events = list(enhanced.global_events or [])
+    if rival_provider() < 0.25:
+        updated_events.append("Locust swarm reported across regional river valleys.")
+
     # Compute chronicle entry
     entry = ChronicleEntry(
         year=old_state.year,
@@ -378,6 +543,9 @@ def step_enhanced_year(
             chronicle=updated_chronicle,
             scenario_status="DEFEAT",
             status_message="DEFEAT: You were impeached for catastrophic famine!",
+            rivals=updated_rivals,
+            diplomacy=updated_diplomacy,
+            global_events=updated_events,
         )
 
     # Scenario-specific evaluation
@@ -443,6 +611,9 @@ def step_enhanced_year(
                 chronicle=updated_chronicle,
                 scenario_status=status,
                 status_message=msg,
+                rivals=updated_rivals,
+                diplomacy=updated_diplomacy,
+                global_events=updated_events,
             )
 
     return EnhancedGameState(
@@ -452,6 +623,9 @@ def step_enhanced_year(
         chronicle=updated_chronicle,
         scenario_status=enhanced.scenario_status,
         status_message=f"Year {new_state.year} commenced.",
+        rivals=updated_rivals,
+        diplomacy=updated_diplomacy,
+        global_events=updated_events,
     )
 
 
@@ -475,6 +649,9 @@ def save_game_state(
             "chronicle": [asdict(e) for e in enhanced.chronicle],
             "scenario_status": enhanced.scenario_status,
             "status_message": enhanced.status_message,
+            "rivals": [asdict(r) for r in (enhanced.rivals or [])],
+            "diplomacy": [asdict(d) for d in (enhanced.diplomacy or [])],
+            "global_events": enhanced.global_events or [],
         }
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -516,6 +693,21 @@ def load_game_state(
             ChronicleEntry(**item) for item in data.get("chronicle", [])
         ]
 
+        loaded_rivals = [RivalKingdom(**r) for r in data.get("rivals", [])]
+        loaded_diplomacy = [DiplomaticRelation(**d) for d in data.get("diplomacy", [])]
+        if not loaded_rivals:
+            loaded_rivals = [
+                RivalKingdom("elam", "Elam", "King Shutruk", 120, 2500, 1100, 30, 150, 400, 1.2, personality="AGGRESSIVE"),
+                RivalKingdom("assyria", "Assyria", "Tiglath-Pileser", 150, 3500, 1500, 50, 250, 600, 1.5, personality="EXPANSIONIST"),
+                RivalKingdom("sumer", "Ur of Sumer", "Ur-Nammu", 90, 2200, 900, 15, 80, 800, 0.9, personality="DEFENSIVE"),
+            ]
+        if not loaded_diplomacy:
+            loaded_diplomacy = [
+                DiplomaticRelation("elam", status="NEUTRAL", opinion=40),
+                DiplomaticRelation("assyria", status="HOSTILE", opinion=20),
+                DiplomaticRelation("sumer", status="NEUTRAL", opinion=65),
+            ]
+
         return EnhancedGameState(
             classic_state=c_state,
             mode=data.get("mode", "ENHANCED"),
@@ -523,6 +715,9 @@ def load_game_state(
             chronicle=chronicle_entries,
             scenario_status=data.get("scenario_status", "IN_PROGRESS"),
             status_message=data.get("status_message"),
+            rivals=loaded_rivals,
+            diplomacy=loaded_diplomacy,
+            global_events=data.get("global_events", []),
         )
     except Exception:
         return None

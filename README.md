@@ -23,6 +23,8 @@ RetroRevive is a modernized tribute to **HAMURABI (1978)** by David H. Ahl (Crea
 | **Classic 1978** | 100% faithful to the original BASIC rules — buy land, feed people, plant crops |
 | **Enhanced Realm** | Royal Advisors, Chronicle Log, and cinematic events |
 | **Scenario Challenges** | The Great Drought, Population Boom, Granary Defense |
+| **AI Royal Governor** | Autonomous LLM-powered agent with real tool calling, multi-kingdom diplomacy, and military commands |
+| **Babylon 3D & Cinematics** | Cinematic Studio, procedural world camera, and Babylon empire immersion |
 | **23 Matches (Nim)** | The 1978 Bob Albrecht Nim game, fully playable |
 
 ### Core Gameplay Loop (Every Year)
@@ -38,6 +40,35 @@ Rule for 10 years keeping:
 - Avoid impeachment (> 45% population starved in one year)
 
 ---
+
+
+---
+
+## 👑 AI Royal Governor — Autonomous Regional Agent
+
+RetroRevive features a genuinely autonomous **AI Royal Governor** built for **Agentathon**. The Governor acts as the King's autonomous prime minister, making real decisions that directly mutate authoritative game engine state.
+
+### 🧠 Core Agent Architecture
+1. **Observe** — Inspects real kingdom state, disaster threats (famine, plague, rodent risk), and food security metrics.
+2. **Recall** — Evaluates **Strategic Historical Memory** by analyzing multi-year trends from the Chronicle log.
+3. **Think & Plan** — Uses **Google Gemini LLM Function Calling** (via `GEMINI_API_KEY` or `GOOGLE_API_KEY`) with real Python tool execution, with an honest deterministic **Rule-Based Planner** fallback.
+4. **Act** — Executes decrees through the authoritative engine (`game_logic.py` and `modern_game_logic.py`).
+5. **Verify** — Verifies before-and-after resource deltas, food security buffers, and ensures goal progress.
+
+### 🌍 Multi-Kingdom Regional Simulation
+- **Assyria** (Tiglath-Pileser) — Expansionist & militaristic powerhouse.
+- **Elam** (King Shutruk) — Aggressive eastern kingdom requiring active deterrence.
+- **Ur of Sumer** (Ur-Nammu) — Defensive trading partner rich in cultural heritage.
+- Rivals execute independent annual turns (harvests, consumption, army recruitment, opinion adjustments).
+
+### 🛠️ 15 Authoritative Agent Tools
+- `inspect_kingdom_state` & `calculate_grain_requirements`
+- `allocate_grain`, `manage_land`, & `manage_farming`
+- `inspect_disaster_conditions` & `get_advisor_recommendation`
+- `get_chronicle_summary` & `advance_kingdom_turn`
+- `inspect_rival_kingdoms` & `scout_kingdom`
+- `evaluate_war_readiness` & `manage_military`
+- `manage_diplomacy` (Trade agreements, alliances, peace treaties)
 
 ## 🎨 Visual Features
 - **Living Babylonian World** — Animated Euphrates River, Ziggurat of Etemenanki, Royal Palace, Ishtar Gates, farms, and markets
@@ -127,7 +158,7 @@ python main.py
 pytest test_game.py test_modern.py test_auth.py test_ui.py test_platform.py "games\23_matches\test_engine.py" -v
 ```
 
-**117 tests, all passing on Python 3.14.0.**
+**184 tests, all passing on Python 3.14.0.**
 
 ---
 
@@ -192,4 +223,4 @@ RetroRevive/
 ---
 
 *RetroRevive — Built for the Buildathon 2026 Hackathon*  
-*Python 3.14.0 | pygame-ce 2.5.8 | 117 tests passing*
+*Python 3.14.0 | pygame-ce 2.5.8 | 184 tests passing*

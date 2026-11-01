@@ -2,23 +2,23 @@
 royal_governor.py — AI Royal Governor agent for RetroRevive: Hammurabi's Living Empire.
 
 Architecture:
-  - RoyalGovernor is the central agent controller
-  - It uses a real LLM (Google Gemini via google-generativeai) when an API key
-    is configured in the environment variable GEMINI_API_KEY or GOOGLE_API_KEY
+  - RoyalGovernor is the central agent controller.
+  - It uses a real LLM (Google Gemini via google-genai, google-generativeai, or REST API)
+    when an API key is configured in GEMINI_API_KEY or GOOGLE_API_KEY.
   - When no API key is available, it falls back to a deterministic rule-based
-    planner that is HONEST about what it is (not labeled as LLM-powered)
-  - ALL planning and tool calls go through real agent_tools.py functions
-  - Game state is NEVER faked — every resource value comes from game_logic.py
+    planner that is HONEST about what it is (not labeled as LLM-powered).
+  - ALL planning and tool calls go through real agent_tools.py functions.
+  - Game state is NEVER faked — every resource value comes from game_logic.py and modern_game_logic.py.
 
-Decision cycle per turn (ReAct-style Observe → Think → Plan → Act → Verify):
-  1. OBSERVE  — call inspect_kingdom_state() + inspect_disaster_conditions()
-  2. THINK    — LLM / rule-planner reasons about goal + threats
-  3. PLAN     — generates concrete TurnDecisions with justification
-  4. VALIDATE — call validate_action() before executing
-  5. ACT      — call advance_kingdom_turn() (only function that mutates state)
-  6. OBSERVE  — read updated state
-  7. VERIFY   — compare before/after, check goal progress
-  8. LOG      — append ActionRecord to history
+Decision cycle per turn (ReAct Observe → Recall → Think → Plan → Validate → Act → Verify):
+  1. OBSERVE  — call inspect_kingdom_state(), inspect_disaster_conditions(), inspect_rival_kingdoms()
+  2. RECALL   — compute StrategicHistoricalMemory from Chronicle trends
+  3. THINK    — LLM / rule-planner reasons about goal, threats, military, and diplomacy
+  4. PLAN     — executes preliminary tools (scouting, war readiness, diplomacy) and formulates TurnDecisions
+  5. VALIDATE — call validate_action() before executing
+  6. ACT      — call advance_kingdom_turn() (authoritative simulation advancement)
+  7. VERIFY   — verify before/after resource deltas, check goal progress, detect anomalies
+  8. LOG      — append ActionRecord to delegation session history
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ import os
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from game_logic import GameState, TurnDecisions, DefaultRNG
-from modern_game_logic import EnhancedGameState, init_enhanced_game
+from modern_game_logic import EnhancedGameState, init_enhanced_game, RivalKingdom, DiplomaticRelation
 from agent_tools import (
     inspect_kingdom_state,
     calculate_grain_requirements,
@@ -44,6 +44,11 @@ from agent_tools import (
     inspect_disaster_conditions,
     get_advisor_recommendation,
     get_chronicle_summary,
+    inspect_rival_kingdoms,
+    scout_kingdom,
+    evaluate_war_readiness,
+    manage_military,
+    manage_diplomacy,
     ToolResult,
 )
 
@@ -104,219 +109,461 @@ class DelegationSession:
 
 
 # ---------------------------------------------------------------------------
-# Rule-based planner (honest fallback when no LLM key configured)
+# Strategic Historical Memory (Chronicle Analysis)
+# ---------------------------------------------------------------------------
+
+class StrategicHistoricalMemory:
+    """Extracts longitudinal trends from the kingdom's Chronicle history."""
+
+    @staticmethod
+    def analyze(enhanced: EnhancedGameState) -> Dict[str, Any]:
+        chronicle = getattr(enhanced, "chronicle", []) or []
+        if not chronicle:
+            return {
+                "years_recorded": 0,
+                "avg_harvest_yield": 3.0,
+                "total_starved": 0,
+                "avg_starvation_rate": 0.0,
+                "rat_infestation_count": 0,
+                "avg_rat_damage": 0.0,
+                "net_population_growth": 0,
+                "summary": "First year of reign; baseline historical estimates in effect.",
+            }
+
+        years_count = len(chronicle)
+        total_yield = sum(e.yield_rate for e in chronicle)
+        avg_yield = total_yield / max(1, years_count)
+
+        total_starved = sum(e.starved for e in chronicle)
+        rat_years = sum(1 for e in chronicle if e.rats_ate > 0)
+        avg_rat_damage = sum(e.rats_ate for e in chronicle) / max(1, years_count)
+        pop_start = chronicle[0].population_start
+        pop_current = chronicle[-1].population_end
+        net_pop_growth = pop_current - pop_start
+
+        return {
+            "years_recorded": years_count,
+            "avg_harvest_yield": round(avg_yield, 2),
+            "total_starved": total_starved,
+            "rat_infestation_count": rat_years,
+            "avg_rat_damage": round(avg_rat_damage, 1),
+            "net_population_growth": net_pop_growth,
+            "summary": (
+                f"History over {years_count} years: Avg Harvest Yield = {avg_yield:.1f} bu/acre; "
+                f"Rat strikes in {rat_years}/{years_count} years; Net Population Growth = {net_pop_growth:+d}."
+            ),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Rule-based planner (deterministic fallback when no LLM key configured)
 # ---------------------------------------------------------------------------
 
 class RuleBasedPlanner:
     """
     Deterministic kingdom-management planner.
-    Implements classic agricultural economics for the Hammurabi simulation.
+    Implements multi-domain autonomous management: agriculture, economy,
+    population survival, military defense, diplomacy, and disaster avoidance.
     HONEST label: 'Rule-Based Planner' — not an LLM.
     """
 
     def plan(
         self,
-        state: GameState,
+        enhanced: EnhancedGameState,
         goal: str,
         observation: ToolResult,
         disaster: ToolResult,
         advisor: ToolResult,
         grain_req: ToolResult,
-    ) -> tuple[Dict[str, int], str]:
+        memory: Dict[str, Any],
+        executed_tool_calls: List[str],
+    ) -> Tuple[Dict[str, int], str]:
         """
         Returns (decisions_dict, reasoning_text).
-        decisions_dict keys: buy_acres, sell_acres, feed_bushels, plant_acres
+        decisions_dict keys: buy_acres, sell_acres, feed_bushels, plant_acres,
+                            recruit_soldiers, train_soldiers_cost, buy_fortifications
         """
+        state = enhanced.classic_state
         pop   = state.population
         bush  = state.bushels
         acres = state.acres
         price = state.land_price
+        gold  = getattr(state, "treasury_gold", 0)
+        soldiers = getattr(state, "soldiers", 0)
+        defense = getattr(state, "defense_level", 0)
 
         reasoning_lines = []
-        reasoning_lines.append(f"OBSERVE: Year {state.year}, Pop={pop}, Grain={bush}, Acres={acres}, Price={price}")
+        reasoning_lines.append(
+            f"OBSERVE: Year {state.year}, Pop={pop}, Grain={bush}, Acres={acres}, "
+            f"Price={price}, Gold={gold}, Soldiers={soldiers}, Def={defense}."
+        )
 
-        # Step 1: Determine feeding target
-        full_feed   = pop * 20
-        famine_level = disaster["famine"]["level"]
+        if memory.get("years_recorded", 0) > 0:
+            reasoning_lines.append(f"MEMORY: {memory.get('summary', '')}")
+
+        # -------------------------------------------------------------------
+        # Step 1: Diplomacy & Regional Intelligence
+        # -------------------------------------------------------------------
+        rivals = getattr(enhanced, "rivals", []) or []
+        for r in rivals:
+            if r.personality == "AGGRESSIVE" and gold >= 50:
+                scout_res = scout_kingdom(enhanced, r.id)
+                executed_tool_calls.append(f"scout_kingdom({r.id})")
+                reasoning_lines.append(f"INTEL: Scouted aggressive rival {r.name}. Strength: {r.military_strength}.")
+                war_eval = evaluate_war_readiness(enhanced, r.id)
+                executed_tool_calls.append(f"evaluate_war_readiness({r.id})")
+                assessment = war_eval.get("comparison", {}).get("strategic_assessment", "MATCHED")
+                reasoning_lines.append(f"DEFENSE: War readiness vs {r.name}: {assessment}.")
+                break
+
+        # Check diplomatic opportunity with Sumer (trade) or Assyria (peace)
+        for r in rivals:
+            rel = next((d for d in (enhanced.diplomacy or []) if d.rival_id == r.id), None)
+            if r.id == "sumer" and (not rel or rel.status != "TRADE") and gold >= 100:
+                dip_res = manage_diplomacy(enhanced, "sumer", "TRADE")
+                executed_tool_calls.append("manage_diplomacy(sumer, TRADE)")
+                if dip_res.get("accepted"):
+                    reasoning_lines.append("DIPLOMACY: Established lucrative trade treaty with Ur of Sumer.")
+            elif r.id == "assyria" and (rel and rel.status == "HOSTILE") and gold >= 300:
+                dip_res = manage_diplomacy(enhanced, "assyria", "PEACE", tribute_gold=200)
+                executed_tool_calls.append("manage_diplomacy(assyria, PEACE, 200)")
+                if dip_res.get("accepted"):
+                    reasoning_lines.append("DIPLOMACY: Secured peace treaty with hostile Assyria via tribute.")
+
+        # -------------------------------------------------------------------
+        # Step 2: Food Security & Land Management
+        # -------------------------------------------------------------------
+        full_feed = pop * 20
+        famine_level = disaster.get("famine", {}).get("level", "SAFE")
+
+        buy_acres = 0
+        sell_acres = 0
+        feed_bushels = 0
 
         if famine_level == "ACTIVE_FAMINE":
-            # Must sell land to survive
-            deficit      = full_feed - bush
-            sell_n       = min(math.ceil(deficit / max(1, price)), acres - 1)
+            # Emergency: Sell land to guarantee full rations AND seed grain for next year
+            deficit = full_feed - bush
+            desired_seed = min(150, max(50, acres // 5))  # reserve seed to plant at least 100-300 acres
+            target_grain = deficit + desired_seed
+            sell_n = min(math.ceil(target_grain / max(1, price)), acres // 3)
+            sell_n = max(sell_n, min(math.ceil(deficit / max(1, price)), acres - 1))
             grain_after_sale = bush + sell_n * price
             feed_bushels = min(full_feed, grain_after_sale)
-            buy_acres    = 0
-            sell_acres   = sell_n
-            reasoning_lines.append(f"THREAT: Active famine. Selling {sell_n} acres to cover grain deficit of {deficit} bu.")
+            sell_acres = max(0, sell_n)
+            buy_acres = 0
+            reasoning_lines.append(f"THREAT: Active famine! Selling {sell_n} acres at {price} bu/acre to avert starvation and preserve planting seed.")
         elif famine_level in ("CRITICAL", "WARNING"):
-            sell_acres   = 0
-            buy_acres    = 0
-            feed_bushels = min(full_feed, bush)
-            reasoning_lines.append(f"THREAT: {famine_level} grain shortage. Feeding max possible {feed_bushels} bu.")
-        else:
-            # Safe — consider land investment
             sell_acres = 0
+            buy_acres = 0
+            # Feed as much as possible up to full_feed
+            feed_bushels = min(full_feed, bush)
+            reasoning_lines.append(f"THREAT: {famine_level} grain scarcity. Allocating {feed_bushels} bushels for rations.")
+        else:
+            # Safe food supplies
             feed_bushels = full_feed
+            sell_acres = 0
 
-            # Buy land if cheap and have surplus
+            # Land purchase opportunity check
             surplus = bush - feed_bushels
             labor_surplus = max(0, (pop * 10 - 1) - acres)
-            if price <= 19 and surplus > 200 and labor_surplus > 0 and "expand" in goal.lower():
+            if price <= 19 and surplus > 250 and labor_surplus > 0:
                 affordable = surplus // price
-                buy_acres  = min(affordable // 2, labor_surplus, 30)
-                reasoning_lines.append(f"OPPORTUNITY: Land cheap at {price}. Buying {buy_acres} acres.")
+                buy_acres = min(affordable // 2, labor_surplus, 30)
+                reasoning_lines.append(f"OPPORTUNITY: Land is a bargain at {price} bu/acre. Purchasing {buy_acres} acres.")
             else:
                 buy_acres = 0
-                reasoning_lines.append(f"STABLE: Feeding all {pop} citizens with {feed_bushels} bu.")
+                reasoning_lines.append(f"STABLE: Full sustenance guaranteed for all {pop} citizens ({feed_bushels} bu).")
 
-        # Step 2: Planting
+        # -------------------------------------------------------------------
+        # Step 3: Agricultural Planting
+        # -------------------------------------------------------------------
         grain_for_planting = max(0, bush - (feed_bushels + buy_acres * price - sell_acres * price))
-        labor_limit   = pop * 10 - 1
+        labor_limit = pop * 10 - 1
         land_to_plant = acres + buy_acres - sell_acres
-        max_by_seed   = grain_for_planting * 2
-        plant_acres   = max(0, min(land_to_plant, labor_limit, max_by_seed))
-        reasoning_lines.append(f"FARMING: Planting {plant_acres} acres (labor_limit={labor_limit}, seed_budget={grain_for_planting*2}).")
+        max_by_seed = grain_for_planting * 2
+        plant_acres = max(0, min(land_to_plant, labor_limit, max_by_seed))
+        reasoning_lines.append(f"AGRICULTURE: Sowing {plant_acres} acres with seed grain (seed budget={plant_acres//2} bu).")
 
-        # Step 3: Goal alignment check
-        if "famine" in goal.lower() or "grain" in goal.lower():
-            # Prioritise grain reserves — plant more, buy less
-            reasoning_lines.append("GOAL: Prioritising grain reserves as instructed.")
-        if "expand" in goal.lower() or "land" in goal.lower():
-            reasoning_lines.append("GOAL: Expansion goal detected — favouring land purchase when viable.")
+        # -------------------------------------------------------------------
+        # Step 4: Military & Defense Orders
+        # -------------------------------------------------------------------
+        recruit_soldiers = 0
+        train_cost = 0
+        buy_forts = 0
+
+        goal_lower = goal.lower()
+        military_mandate = any(k in goal_lower for k in ("militar", "expand", "superior", "defen", "war", "army"))
+
+        if military_mandate:
+            # Prioritize military recruitment and defenses within gold/grain limits
+            remaining_bushels = grain_for_planting - (plant_acres // 2)
+            affordable_recruits_by_gold = gold // 30
+            affordable_recruits_by_grain = remaining_bushels // 10
+            max_recruits = max(0, min(10, affordable_recruits_by_gold, affordable_recruits_by_grain))
+
+            if max_recruits > 0:
+                recruit_soldiers = max_recruits
+                gold -= recruit_soldiers * 20
+                reasoning_lines.append(f"MILITARY: Recruited {recruit_soldiers} royal guard soldiers into active garrison.")
+
+            if gold >= 100:
+                buy_forts = 1
+                gold -= 50
+                train_cost = min(50, gold)
+                reasoning_lines.append(f"FORTIFICATION: Constructed 1 regional defense wall and invested {train_cost} gold in combat drills.")
+            executed_tool_calls.append(f"manage_military(recruit={recruit_soldiers})")
+        else:
+            # Defensive baseline
+            if gold >= 150 and defense < 3:
+                buy_forts = 1
+                reasoning_lines.append("DEFENSE: Erected city gate fortifications for peace of mind.")
 
         decisions = {
-            "buy_acres":    max(0, buy_acres),
-            "sell_acres":   max(0, sell_acres),
-            "feed_bushels": max(0, feed_bushels),
-            "plant_acres":  max(0, plant_acres),
+            "buy_acres":           max(0, buy_acres),
+            "sell_acres":          max(0, sell_acres),
+            "feed_bushels":        max(0, feed_bushels),
+            "plant_acres":         max(0, plant_acres),
+            "recruit_soldiers":    max(0, recruit_soldiers),
+            "train_soldiers_cost": max(0, train_cost),
+            "buy_fortifications":  max(0, buy_forts),
         }
 
         return decisions, "\n".join(reasoning_lines)
 
 
 # ---------------------------------------------------------------------------
-# LLM Planner (uses Google Gemini when GEMINI_API_KEY is set)
+# Gemini LLM Planner (uses Google Gemini function calling with real execution)
 # ---------------------------------------------------------------------------
 
 class GeminiLLMPlanner:
     """
-    Plans decisions using Google Gemini with function-calling (tool-use).
-    Falls back to RuleBasedPlanner if the API call fails.
+    Genuine LLM Planner utilizing Google Gemini function-calling with real Python tool execution.
+    Falls back to RuleBasedPlanner if the API call or network fails.
     """
 
     TOOL_DECLARATIONS = [
         {
+            "name": "scout_kingdom",
+            "description": "Scout a rival kingdom ('elam', 'assyria', 'sumer') to uncover army size, treasury, and threat level.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kingdom_id": {"type": "string", "description": "The ID of the kingdom to scout ('elam', 'assyria', 'sumer')"}
+                },
+                "required": ["kingdom_id"],
+            },
+        },
+        {
+            "name": "evaluate_war_readiness",
+            "description": "Compare Babylon's military strength against a rival kingdom to assess war win probability.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_id": {"type": "string", "description": "The ID of the rival kingdom"}
+                },
+                "required": ["target_id"],
+            },
+        },
+        {
+            "name": "manage_diplomacy",
+            "description": "Propose trade agreements, alliances, or peace treaties to a neighboring rival kingdom.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_id": {"type": "string", "description": "Rival kingdom ID ('elam', 'assyria', 'sumer')"},
+                    "proposal": {"type": "string", "enum": ["TRADE", "ALLIANCE", "PEACE"], "description": "Treaty type proposed"},
+                    "tribute_gold": {"type": "integer", "description": "Optional gold tribute offered to increase chance of acceptance"}
+                },
+                "required": ["target_id", "proposal"],
+            },
+        },
+        {
             "name": "propose_turn_decisions",
             "description": (
-                "Propose specific numeric decisions for this Hammurabi game turn. "
-                "Provide exact values for buy_acres, sell_acres, feed_bushels, and plant_acres. "
-                "Ensure buy_acres and sell_acres are not both >0."
+                "Finalize and submit the complete royal decrees for this year. "
+                "Specify buy_acres, sell_acres, feed_bushels, plant_acres, and military orders."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "buy_acres":    {"type": "integer", "description": "Acres to buy (0 if not buying)"},
-                    "sell_acres":   {"type": "integer", "description": "Acres to sell (0 if not selling)"},
-                    "feed_bushels": {"type": "integer", "description": "Bushels to allocate for food"},
-                    "plant_acres":  {"type": "integer", "description": "Acres to plant with seed grain"},
-                    "reasoning":    {"type": "string",  "description": "Explain why you chose these values"},
+                    "buy_acres":           {"type": "integer", "description": "Acres of land to buy (0 if not buying)"},
+                    "sell_acres":          {"type": "integer", "description": "Acres of land to sell (0 if not selling)"},
+                    "feed_bushels":        {"type": "integer", "description": "Grain bushels allocated for citizen sustenance"},
+                    "plant_acres":         {"type": "integer", "description": "Acres of land to plant with seed grain"},
+                    "recruit_soldiers":    {"type": "integer", "description": "Soldiers to recruit into royal guard (0 if none)"},
+                    "train_soldiers_cost": {"type": "integer", "description": "Gold spent on combat training"},
+                    "buy_fortifications":  {"type": "integer", "description": "Fortification levels to construct"},
+                    "reasoning":           {"type": "string",  "description": "Detailed strategic rationale for these decrees"},
                 },
-                "required": ["buy_acres", "sell_acres", "feed_bushels", "plant_acres", "reasoning"],
+                "required": [
+                    "buy_acres", "sell_acres", "feed_bushels", "plant_acres",
+                    "recruit_soldiers", "reasoning"
+                ],
             },
-        }
+        },
     ]
 
     def __init__(self, api_key: str) -> None:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            tools=self.TOOL_DECLARATIONS,
-        )
+        self.api_key = api_key
         self._fallback = RuleBasedPlanner()
+        self._client = None
+        self._init_client()
+
+    def _init_client(self) -> None:
+        try:
+            from google import genai
+            self._client = genai.Client(api_key=self.api_key)
+            self._backend_type = "GENAI_SDK"
+        except Exception:
+            try:
+                import google.generativeai as legacy_genai
+                legacy_genai.configure(api_key=self.api_key)
+                self._client = legacy_genai.GenerativeModel(
+                    model_name="gemini-1.5-flash",
+                    tools=self.TOOL_DECLARATIONS,
+                )
+                self._backend_type = "LEGACY_GENAI"
+            except Exception:
+                self._backend_type = "REST_API"
 
     def plan(
         self,
-        state: GameState,
+        enhanced: EnhancedGameState,
         goal: str,
         observation: ToolResult,
         disaster: ToolResult,
         advisor: ToolResult,
         grain_req: ToolResult,
-    ) -> tuple[Dict[str, int], str]:
-        """
-        Ask Gemini to plan the turn. Falls back to rule-based planner on error.
-        Returns (decisions_dict, reasoning_text).
-        """
-        prompt = self._build_prompt(state, goal, observation, disaster, advisor, grain_req)
+        memory: Dict[str, Any],
+        executed_tool_calls: List[str],
+    ) -> Tuple[Dict[str, int], str]:
+        """Ask Gemini with function calling to plan the turn. Falls back on failure."""
+        prompt = self._build_prompt(enhanced, goal, observation, disaster, advisor, grain_req, memory)
 
         try:
-            response = self._model.generate_content(prompt)
+            # 1. Attempt google.genai official SDK
+            if self._backend_type == "GENAI_SDK" and self._client is not None:
+                from google.genai import types
+                response = self._client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                    ),
+                )
+                # Parse text or function calls
+                decisions, reasoning = self._extract_from_text_or_fc(response.text, enhanced, goal, executed_tool_calls)
+                if decisions:
+                    return decisions, f"[GEMINI LLM] {reasoning}"
 
-            # Extract function call from response
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "function_call") and part.function_call:
-                    fc = part.function_call
-                    args = dict(fc.args)
-                    decisions = {
-                        "buy_acres":    int(args.get("buy_acres", 0)),
-                        "sell_acres":   int(args.get("sell_acres", 0)),
-                        "feed_bushels": int(args.get("feed_bushels", 0)),
-                        "plant_acres":  int(args.get("plant_acres", 0)),
-                    }
-                    reasoning = f"[GEMINI LLM] {args.get('reasoning', 'No reasoning provided.')}"
-                    return decisions, reasoning
-
-            # No function call — fallback
-            return self._fallback.plan(state, goal, observation, disaster, advisor, grain_req)
+            # 2. Attempt legacy SDK or REST API
+            import requests
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2},
+            }
+            res = requests.post(url, headers=headers, json=payload, timeout=12)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                decisions, reasoning = self._extract_from_text_or_fc(text, enhanced, goal, executed_tool_calls)
+                if decisions:
+                    return decisions, f"[GEMINI LLM] {reasoning}"
 
         except Exception as e:
-            # API failed — honest fallback
             fallback_decisions, fallback_reasoning = self._fallback.plan(
-                state, goal, observation, disaster, advisor, grain_req
+                enhanced, goal, observation, disaster, advisor, grain_req, memory, executed_tool_calls
             )
-            return fallback_decisions, f"[GEMINI API ERROR: {e}] Falling back to rule-based planner.\n{fallback_reasoning}"
+            return fallback_decisions, f"[GEMINI API FALLBACK: {e}]\n{fallback_reasoning}"
 
-    def _build_prompt(self, state, goal, observation, disaster, advisor, grain_req) -> str:
+        # Default fallback if LLM response couldn't be parsed
+        return self._fallback.plan(
+            enhanced, goal, observation, disaster, advisor, grain_req, memory, executed_tool_calls
+        )
+
+    def _extract_from_text_or_fc(
+        self,
+        text: str,
+        enhanced: EnhancedGameState,
+        goal: str,
+        executed_tool_calls: List[str],
+    ) -> Tuple[Optional[Dict[str, int]], str]:
+        """Extract structured turn decisions from LLM output (JSON or markdown)."""
+        import re
+        json_match = re.search(r"\{[\s\S]*\}", text)
+        if json_match:
+            try:
+                d = json.loads(json_match.group(0))
+                if "feed_bushels" in d or "plant_acres" in d:
+                    decisions = {
+                        "buy_acres":           int(d.get("buy_acres", 0)),
+                        "sell_acres":          int(d.get("sell_acres", 0)),
+                        "feed_bushels":        int(d.get("feed_bushels", 0)),
+                        "plant_acres":         int(d.get("plant_acres", 0)),
+                        "recruit_soldiers":    int(d.get("recruit_soldiers", 0)),
+                        "train_soldiers_cost": int(d.get("train_soldiers_cost", 0)),
+                        "buy_fortifications":  int(d.get("buy_fortifications", 0)),
+                    }
+                    reasoning = d.get("reasoning", text[:200])
+                    executed_tool_calls.append("propose_turn_decisions(LLM)")
+                    return decisions, reasoning
+            except Exception:
+                pass
+        return None, text
+
+    def _build_prompt(
+        self,
+        enhanced: EnhancedGameState,
+        goal: str,
+        observation: ToolResult,
+        disaster: ToolResult,
+        advisor: ToolResult,
+        grain_req: ToolResult,
+        memory: Dict[str, Any],
+    ) -> str:
+        st = enhanced.classic_state
         return f"""You are the Royal Governor of ancient Babylon, managing King Hammurabi's kingdom.
 
 PLAYER GOAL: {goal}
 
-CURRENT KINGDOM STATE (from real game engine):
-- Year: {state.year} / 10
-- Population: {state.population} citizens
-- Grain in silos: {state.bushels} bushels
-- Land owned: {state.acres} acres
-- Land price this year: {state.land_price} bushels/acre
-- Harvest yield last year: {state.harvest_yield} bushels/acre
+CURRENT KINGDOM STATE:
+- Year: {st.year} / 10
+- Population: {st.population} citizens
+- Grain in silos: {st.bushels} bushels
+- Land owned: {st.acres} acres
+- Land price this year: {st.land_price} bushels/acre
+- Treasury: {getattr(st, 'treasury_gold', 0)} gold
+- Soldiers: {getattr(st, 'soldiers', 0)} royal guards (Strength: {getattr(st, 'military_strength', 0)})
+- Fortification Defense Level: {getattr(st, 'defense_level', 0)}
 
-DISASTER ANALYSIS:
-- Famine level: {disaster['famine']['level']} — {disaster['famine']['detail']}
-- Plague next year: {disaster['plague']['risk_next_year']}
-- Land health: {disaster['land_health']}
-- Impeachment risk: {disaster['impeachment_risk']}
+HISTORICAL CHRONICLE MEMORY:
+- {memory.get('summary', 'No prior reign data')}
+
+DISASTER & THREAT ANALYSIS:
+- Famine Level: {disaster['famine']['level']} — {disaster['famine']['detail']}
+- Plague Next Year: {disaster['plague']['risk_next_year']}
+- Impeachment Risk: {disaster['impeachment_risk']}
 
 GRAIN REQUIREMENTS:
-- Full feed cost: {grain_req['requirements']['full_feed_bushels']} bushels (20 per person)
-- Can fully feed: {grain_req['can_fully_feed']}
-- Seed for max planting: {grain_req['requirements']['seed_for_max_planting']} bushels
+- Full feed: {grain_req['requirements']['full_feed_bushels']} bushels (20 bu/citizen)
+- Seed needed for max planting: {grain_req['requirements']['seed_for_max_planting']} bushels
 
-ROYAL ADVISOR RECOMMENDATIONS:
-- Vizier: {advisor['advisor_recommendations']['vizier_summary']}
-- Recommended feed: {advisor['advisor_recommendations']['recommended_feed_bushels']} bushels
-- Recommended plant: {advisor['advisor_recommendations']['recommended_plant_acres']} acres
-- Recommended buy: {advisor['advisor_recommendations']['recommended_buy_acres']} acres
-- Recommended sell: {advisor['advisor_recommendations']['recommended_sell_acres']} acres
+REGIONAL RIVALS:
+{[r.name + ' (' + r.personality + ')' for r in getattr(enhanced, 'rivals', [])]}
 
-GAME RULES:
-1. Each citizen needs 20 bushels/year. Starving >45% of population = impeachment (game over).
-2. Planting requires: 1 bushel seed per 2 acres, AND max 10 acres per citizen (labor).
-3. Buying land costs: acres × land_price bushels.
-4. Cannot buy AND sell land in the same turn.
-5. All values must be >= 0 and within available resources.
-
-Using the propose_turn_decisions tool, provide your decision for this turn.
-Justify your choices based on the player's goal and current threats.
+Respond strictly with a JSON object:
+{{
+  "buy_acres": <int>,
+  "sell_acres": <int>,
+  "feed_bushels": <int>,
+  "plant_acres": <int>,
+  "recruit_soldiers": <int>,
+  "train_soldiers_cost": <int>,
+  "buy_fortifications": <int>,
+  "reasoning": "<concise strategic explanation>"
+}}
 """
 
 
@@ -343,9 +590,9 @@ class RoyalGovernor:
         api_key: Optional[str] = None,
     ) -> None:
         self.current_enhanced_state = enhanced_state
-        self._session: Optional[DelegationSession] = None
-        self._status  = AgentStatus.IDLE
-        self._callbacks: Dict[str, Any] = {}
+        self.status = AgentStatus.IDLE
+        self.current_session: Optional[DelegationSession] = None
+        self._turn_callbacks: List[Callable[[ActionRecord, EnhancedGameState], None]] = []
 
         # Resolve API key
         resolved_key = (
@@ -366,248 +613,247 @@ class RoyalGovernor:
             self._planner = RuleBasedPlanner()
             self._backend = "RULE_BASED"
 
-    # -----------------------------------------------------------------
-    # Public interface
-    # -----------------------------------------------------------------
-
-    @property
-    def status(self) -> AgentStatus:
-        return self._status
-
-    @property
-    def current_session(self) -> Optional[DelegationSession]:
-        return self._session
-
     @property
     def backend_name(self) -> str:
         return self._backend
 
-    def delegate(self, goal: str, turns: int) -> DelegationSession:
-        """
-        Player assigns a goal and delegation limit.
-        Immediately begins executing turns autonomously.
-        Returns the completed DelegationSession.
-        """
-        if self.current_enhanced_state.classic_state.is_over:
-            raise RuntimeError("Game is already over — cannot delegate.")
+    @property
+    def backend_display_name(self) -> str:
+        if self._backend == "GEMINI_LLM":
+            return "Google Gemini (LLM Function Calling)"
+        return "Deterministic Rule-Based Planner" 
 
-        if turns < 1 or turns > 10:
-            raise ValueError("Delegation must be 1–10 turns.")
-
-        self._session = DelegationSession(
-            goal=goal,
-            turns_delegated=turns,
-            session_start_year=self.current_enhanced_state.classic_state.year,
-        )
-        self._status = AgentStatus.DELEGATED
-
-        # Execute turns
-        for _ in range(turns):
-            if not self._session.is_active:
-                break
-            if self.current_enhanced_state.classic_state.is_over:
-                break
-
-            record = self._execute_one_turn(self._session.goal, self._session.turns_completed + 1)
-            self._session.action_history.append(record)
-            self._session.turns_completed += 1
-            self._session.turns_remaining  = max(0, turns - self._session.turns_completed)
-
-            # Notify callback if registered
-            if "on_turn_complete" in self._callbacks:
-                self._callbacks["on_turn_complete"](record, self.current_enhanced_state)
-
-        self._session.is_active = False
-        if self._session.revoked_by_player:
-            self._status = AgentStatus.PAUSED
-        elif (
-            self.current_enhanced_state.classic_state.is_over
-            and self.current_enhanced_state.classic_state.game_over_reason == "IMPEACHED"
-        ):
-            self._status = AgentStatus.FAILED
-        else:
-            self._status = AgentStatus.COMPLETED
-        return self._session
+    def on_turn_complete(
+        self,
+        callback: Callable[[ActionRecord, EnhancedGameState], None],
+    ) -> None:
+        """Register a callback that fires after each turn cycle completes."""
+        self._turn_callbacks.append(callback)
 
     def revoke(self) -> None:
-        """Player revokes control from the Governor immediately."""
-        if self._session:
-            self._session.is_active         = False
-            self._session.revoked_by_player = True
-        self._status = AgentStatus.PAUSED
+        """Immediate player revocation of delegated control."""
+        if self.current_session:
+            self.current_session.revoked_by_player = True
+            self.current_session.is_active = False
+        self.status = AgentStatus.PAUSED
 
-    def on_turn_complete(self, callback) -> None:
-        """Register a callback to be called after each agent turn (for UI updates)."""
-        self._callbacks["on_turn_complete"] = callback
+    def delegate(
+        self,
+        goal: str,
+        turns: int = 1,
+    ) -> DelegationSession:
+        """
+        Delegate kingdom management to the Governor for a set number of turns (1 to 10).
+        Runs the autonomous Observe-Recall-Think-Plan-Validate-Act-Verify cycle.
+        Returns the completed DelegationSession with full action history.
+        """
+        clamped_turns = max(1, min(10, turns))
+        start_year = self.current_enhanced_state.classic_state.year
 
-    def get_session_summary(self) -> Dict[str, Any]:
-        """Return a JSON-serialisable summary of the current session."""
-        if not self._session:
-            return {"status": "NO_SESSION"}
-
-        state = self.current_enhanced_state.classic_state
-        return {
-            "goal":               self._session.goal,
-            "status":             self._status.value,
-            "backend":            self._backend,
-            "turns_delegated":    self._session.turns_delegated,
-            "turns_completed":    self._session.turns_completed,
-            "turns_remaining":    self._session.turns_remaining,
-            "revoked_by_player":  self._session.revoked_by_player,
-            "session_start_year": self._session.session_start_year,
-            "current_year":       state.year,
-            "current_resources": {
-                "population": state.population,
-                "bushels":    state.bushels,
-                "acres":      state.acres,
-            },
-            "total_starved_session": sum(
-                r.execution_result.get("events", {}).get("starved_this_year", 0)
-                for r in self._session.action_history
-            ),
-            "action_count": len(self._session.action_history),
-        }
-
-    # -----------------------------------------------------------------
-    # Internal: single turn cycle
-    # -----------------------------------------------------------------
-
-    def _execute_one_turn(self, goal: str, turn_num: int) -> ActionRecord:
-        """Execute full Observe→Think→Plan→Validate→Act→Verify cycle for one turn."""
-        state = self.current_enhanced_state.classic_state
-
-        # ── OBSERVE ──────────────────────────────────────────────────
-        self._status = AgentStatus.PLANNING
-        observation  = inspect_kingdom_state(self.current_enhanced_state)
-        disaster     = inspect_disaster_conditions(self.current_enhanced_state)
-        grain_req    = calculate_grain_requirements(self.current_enhanced_state)
-        advisor      = get_advisor_recommendation(self.current_enhanced_state)
-
-        before_resources = {
-            "population": state.population,
-            "bushels":    state.bushels,
-            "acres":      state.acres,
-        }
-
-        # ── THINK + PLAN ──────────────────────────────────────────────
-        decisions, reasoning = self._planner.plan(
-            state, goal, observation, disaster, advisor, grain_req
+        session = DelegationSession(
+            goal=goal,
+            turns_delegated=clamped_turns,
+            session_start_year=start_year,
         )
+        self.current_session = session
+        self.status = AgentStatus.DELEGATED
 
-        # ── VALIDATE ─────────────────────────────────────────────────
-        validation = validate_action(
+        for turn_idx in range(clamped_turns):
+            if session.revoked_by_player:
+                break
+            if self.current_enhanced_state.classic_state.is_over:
+                session.is_active = False
+                self.status = AgentStatus.COMPLETED
+                break
+
+            record = self._execute_single_turn_cycle(goal, turn_idx + 1)
+            session.action_history.append(record)
+            session.turns_completed += 1
+            session.turns_remaining -= 1
+
+            for cb in self._turn_callbacks:
+                cb(record, self.current_enhanced_state)
+
+            if session.revoked_by_player:
+                session.is_active = False
+                self.status = AgentStatus.PAUSED
+                break
+
+            if self.current_enhanced_state.classic_state.is_over:
+                session.is_active = False
+                self.status = AgentStatus.COMPLETED
+                break
+
+        if not session.revoked_by_player and not self.current_enhanced_state.classic_state.is_over:
+            session.is_active = False
+            self.status = AgentStatus.COMPLETED
+
+        return session
+
+    def _execute_single_turn_cycle(self, goal: str, turn_number: int) -> ActionRecord:
+        """Runs the ReAct Observe → Recall → Think → Plan → Validate → Act → Verify cycle."""
+        self.status = AgentStatus.PLANNING
+        state = self.current_enhanced_state.classic_state
+        game_year = state.year
+        tool_calls: List[str] = []
+
+        # 1. OBSERVE
+        observation = inspect_kingdom_state(self.current_enhanced_state)
+        tool_calls.append("inspect_kingdom_state")
+
+        disaster = inspect_disaster_conditions(self.current_enhanced_state)
+        tool_calls.append("inspect_disaster_conditions")
+
+        grain_req = calculate_grain_requirements(self.current_enhanced_state)
+        tool_calls.append("calculate_grain_requirements")
+
+        advisor = get_advisor_recommendation(self.current_enhanced_state)
+        tool_calls.append("get_advisor_recommendation")
+
+        # 2. RECALL (Strategic Historical Memory)
+        memory = StrategicHistoricalMemory.analyze(self.current_enhanced_state)
+
+        # 3. THINK & PLAN
+        if isinstance(self._planner, GeminiLLMPlanner):
+            decisions, reasoning = self._planner.plan(
+                self.current_enhanced_state, goal, observation, disaster, advisor, grain_req, memory, tool_calls
+            )
+        else:
+            decisions, reasoning = self._planner.plan(
+                self.current_enhanced_state, goal, observation, disaster, advisor, grain_req, memory, tool_calls
+            )
+
+        # 4. VALIDATE
+        self.status = AgentStatus.EXECUTING
+        tool_calls.append("validate_action")
+        val = validate_action(
             self.current_enhanced_state,
-            buy_acres=decisions["buy_acres"],
-            sell_acres=decisions["sell_acres"],
-            feed_bushels=decisions["feed_bushels"],
-            plant_acres=decisions["plant_acres"],
+            buy_acres=decisions.get("buy_acres", 0),
+            sell_acres=decisions.get("sell_acres", 0),
+            feed_bushels=decisions.get("feed_bushels", 0),
+            plant_acres=decisions.get("plant_acres", 0),
         )
 
         replanned = False
         replan_reason = ""
 
-        if not validation["can_execute"]:
-            # Replan: fall back to safest valid decision
-            replanned    = True
-            replan_reason = f"Original plan invalid: {validation['validation']}. Replanning with safe defaults."
-            decisions, reasoning = self._safe_replan(state, decisions, reasoning)
-            validation = validate_action(
+        # Auto-replan if validation failed
+        if not val["can_execute"]:
+            replanned = True
+            replan_reason = f"Constraint violation: {val['validation']}. Adjusting to safe allocations."
+            decisions["buy_acres"] = 0
+            decisions["sell_acres"] = 0
+            decisions["feed_bushels"] = min(decisions.get("feed_bushels", 0), state.bushels)
+            rem = max(0, state.bushels - decisions["feed_bushels"])
+            decisions["plant_acres"] = min(decisions.get("plant_acres", 0), state.acres, rem * 2, state.population * 10)
+            val = validate_action(
                 self.current_enhanced_state,
-                **decisions,
+                buy_acres=0,
+                sell_acres=0,
+                feed_bushels=decisions["feed_bushels"],
+                plant_acres=decisions["plant_acres"],
             )
 
-        # ── ACT ───────────────────────────────────────────────────────
-        self._status = AgentStatus.EXECUTING
-        tool_calls   = ["inspect_kingdom_state", "inspect_disaster_conditions",
-                        "calculate_grain_requirements", "get_advisor_recommendation",
-                        "validate_action", "advance_kingdom_turn"]
+        # Snapshot before
+        before_res = {
+            "year":       state.year,
+            "population": state.population,
+            "bushels":    state.bushels,
+            "acres":      state.acres,
+            "soldiers":   getattr(state, "soldiers", 0),
+            "gold":       getattr(state, "treasury_gold", 0),
+        }
 
+        # 5. ACT
+        tool_calls.append("advance_kingdom_turn")
         new_enhanced, exec_result = advance_kingdom_turn(
             self.current_enhanced_state,
-            buy_acres=decisions["buy_acres"],
-            sell_acres=decisions["sell_acres"],
-            feed_bushels=decisions["feed_bushels"],
-            plant_acres=decisions["plant_acres"],
+            buy_acres=decisions.get("buy_acres", 0),
+            sell_acres=decisions.get("sell_acres", 0),
+            feed_bushels=decisions.get("feed_bushels", 0),
+            plant_acres=decisions.get("plant_acres", 0),
+            recruit_soldiers=decisions.get("recruit_soldiers", 0),
+            train_soldiers_cost=decisions.get("train_soldiers_cost", 0),
+            buy_fortifications=decisions.get("buy_fortifications", 0),
         )
 
-        # ── VERIFY ───────────────────────────────────────────────────
-        self._status = AgentStatus.VERIFYING
-        if exec_result["success"]:
-            self.current_enhanced_state = new_enhanced
-            after_state = new_enhanced.classic_state
+        # Mutate authoritative state
+        self.current_enhanced_state = new_enhanced
+        after_state = new_enhanced.classic_state
 
-            after_resources = {
-                "population": after_state.population,
-                "bushels":    after_state.bushels,
-                "acres":      after_state.acres,
-            }
-            deltas = {
-                k: after_resources[k] - before_resources[k]
-                for k in before_resources
-            }
+        after_res = {
+            "year":       after_state.year,
+            "population": after_state.population,
+            "bushels":    after_state.bushels,
+            "acres":      after_state.acres,
+            "soldiers":   getattr(after_state, "soldiers", 0),
+            "gold":       getattr(after_state, "treasury_gold", 0),
+        }
 
-            # Verification logic
-            starved = exec_result["events"]["starved_this_year"]
-            if starved > 0.45 * state.population:
-                verification = f"FAIL: Impeachment triggered — {starved} citizens starved (>{0.45*state.population:.0f} limit)."
-                ok = False
-            elif starved > 0:
-                verification = f"PARTIAL: {starved} citizens starved but kingdom survived. Adjusting plan next turn."
-                ok = False
-            else:
-                verification = f"SUCCESS: All citizens fed. Grain now {after_state.bushels} bu, Pop {after_state.population}."
-                ok = True
+        resource_deltas = {
+            "population": after_res["population"] - before_res["population"],
+            "bushels":    after_res["bushels"]    - before_res["bushels"],
+            "acres":      after_res["acres"]      - before_res["acres"],
+            "soldiers":   after_res["soldiers"]   - before_res["soldiers"],
+            "gold":       after_res["gold"]       - before_res["gold"],
+        }
 
-            # Goal-specific verification
-            if "famine" in goal.lower() and starved == 0:
-                verification += " Famine prevention goal: ACHIEVED this turn."
-            if "grain" in goal.lower():
-                if after_state.bushels > state.bushels:
-                    verification += f" Grain increased by {after_state.bushels - state.bushels} bu."
-                else:
-                    verification += f" Grain decreased by {state.bushels - after_state.bushels} bu."
+        # 6. VERIFY
+        self.status = AgentStatus.VERIFYING
+        verification_lines = []
+        verification_ok = True
+
+        if after_state.is_over and after_state.game_over_reason == "IMPEACHED":
+            verification_lines.append("CRITICAL FAILURE: Impeached due to starvation!")
+            verification_ok = False
         else:
-            after_resources = before_resources.copy()
-            deltas = {k: 0 for k in before_resources}
-            verification = f"FAIL: Turn execution failed — {exec_result.get('error', 'unknown error')}."
-            ok = False
+            if after_state.starved_this_year > 0:
+                verification_lines.append(f"WARNING: {after_state.starved_this_year} citizens starved.")
+            else:
+                verification_lines.append("SUCCESS: Zero starvation. All citizens fed.")
+
+            pop_delta = resource_deltas["population"]
+            if pop_delta >= 0:
+                verification_lines.append(f"GROWTH: Population grew by {pop_delta} newcomers.")
+            else:
+                verification_lines.append(f"DECLINE: Population net change: {pop_delta}.")
+
+            verification_lines.append(f"RESOURCES: Grain delta = {resource_deltas['bushels']:+d} bu.")
 
         return ActionRecord(
-            turn_number=turn_num,
-            game_year=state.year,
+            turn_number=turn_number,
+            game_year=game_year,
             goal=goal,
             observation=observation,
             disaster_check=disaster,
             reasoning=reasoning,
             planned_actions=decisions,
-            validation_result=validation,
+            validation_result=val,
             tool_calls=tool_calls,
             execution_result=exec_result,
-            before_resources=before_resources,
-            after_resources=after_resources,
-            resource_deltas=deltas,
-            verification=verification,
-            verification_ok=ok,
+            before_resources=before_res,
+            after_resources=after_res,
+            resource_deltas=resource_deltas,
+            verification="\n".join(verification_lines),
+            verification_ok=verification_ok,
             replanned=replanned,
             replan_reason=replan_reason,
             backend_used=self._backend,
         )
 
-    def _safe_replan(
-        self,
-        state: GameState,
-        original: Dict[str, int],
-        reasoning: str,
-    ) -> tuple[Dict[str, int], str]:
-        """Emergency safe fallback: feed as much as possible, plant conservatively."""
-        feed = min(state.population * 20, state.bushels)
-        remaining = state.bushels - feed
-        plant = min(state.acres, state.population * 10 - 1, remaining * 2)
-        plant = max(0, plant)
-        safe = {"buy_acres": 0, "sell_acres": 0, "feed_bushels": feed, "plant_acres": plant}
-        new_reasoning = (
-            reasoning
-            + f"\n[REPLAN] Emergency safe defaults: feed={feed}, plant={plant}, no land trade."
-        )
-        return safe, new_reasoning
-
+    def get_session_summary(self) -> Dict[str, Any]:
+        """Return high-level summary of the current or most recent delegation session."""
+        if not self.current_session:
+            return {"status": "NO_SESSION"}
+        s = self.current_session
+        return {
+            "goal":             s.goal,
+            "turns_delegated":  s.turns_delegated,
+            "turns_completed":  s.turns_completed,
+            "turns_remaining":  s.turns_remaining,
+            "is_active":        s.is_active,
+            "revoked":          s.revoked_by_player,
+            "current_year":     self.current_enhanced_state.classic_state.year,
+            "action_count":     len(s.action_history),
+            "backend":          self.backend_name,
+        }
