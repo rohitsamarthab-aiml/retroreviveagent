@@ -408,37 +408,39 @@ def main() -> None:
     )
 
     # 1. Try launching Pygame Graphical Interface unless CLI is forced
-    if not cli_flags_present:
-        try:
-            import pygame  # noqa: F401
-            show_auth = not args.guest
-            if args.matches:
-                from games import matches_app
-                app = matches_app.MatchesApp(start_fullscreen=args.fullscreen)
-                app.run()
-                return
-            elif args.hammurabi or args.governor or args.screen:
-                from ui_pygame import GameApp
-                app = GameApp(start_fullscreen=args.fullscreen, show_auth_modal=show_auth)
-                if args.governor or args.screen == "governor":
-                    app._open_governor_screen()
-                elif args.screen == "military":
-                    app._open_military_screen()
-                elif args.screen == "agriculture":
-                    app._open_agriculture_screen()
-                elif args.screen == "video_creator":
-                    app._open_video_creator_screen()
-                app.run()
-                return
-            else:
-                # Default: Launch RetroRevive Game Library Hub
-                import retrorevive
-                hub = retrorevive.RetroReviveHub(start_fullscreen=args.fullscreen, show_auth_modal=show_auth)
-                hub.run()
-                return
-        except ImportError:
-            # Fallback smoothly to CLI if Pygame is not installed
-            pass
+    has_pygame = False
+    try:
+        import pygame  # noqa: F401
+        has_pygame = True
+    except ImportError:
+        has_pygame = False
+
+    if has_pygame and not cli_flags_present:
+        show_auth = not args.guest
+        if args.matches:
+            from games import matches_app
+            app = matches_app.MatchesApp(start_fullscreen=args.fullscreen)
+            app.run()
+            return
+        elif args.hammurabi or args.governor or args.screen:
+            from ui_pygame import GameApp
+            app = GameApp(start_fullscreen=args.fullscreen, show_auth_modal=show_auth)
+            if args.governor or args.screen == "governor":
+                app._open_governor_screen()
+            elif args.screen == "military":
+                app._open_military_screen()
+            elif args.screen == "agriculture":
+                app._open_agriculture_screen()
+            elif args.screen == "video_creator":
+                app._open_video_creator_screen()
+            app.run()
+            return
+        else:
+            # Default: Launch RetroRevive Game Library Hub
+            import retrorevive
+            hub = retrorevive.RetroReviveHub(start_fullscreen=args.fullscreen, show_auth_modal=show_auth)
+            hub.run()
+            return
 
     # 2. Terminal CLI Execution
     if args.matches:

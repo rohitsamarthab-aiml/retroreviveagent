@@ -176,8 +176,9 @@ class RetroReviveHub:
         self.btn_quit = UIButton((BASE_WIDTH - 120, 16, 90, 36), "QUIT", self.quit, color_scheme="crimson", font_size=13)
 
         # Modal buttons
-        self.btn_modal_launch = UIButton((BASE_WIDTH // 2 - 180, 565, 160, 44), "LAUNCH GAME", self._launch_modal_game, primary=True)
-        self.btn_modal_close = UIButton((BASE_WIDTH // 2 + 20, 565, 160, 44), "BACK", self._close_modal, color_scheme="sand")
+        self.btn_modal_launch = UIButton((BASE_WIDTH // 2 - 270, 565, 160, 44), "LAUNCH GAME", self._launch_modal_game, primary=True)
+        self.btn_modal_governor = UIButton((BASE_WIDTH // 2 - 90, 565, 180, 44), "⚖ ROYAL GOVERNOR", self._launch_modal_governor, color_scheme="gold")
+        self.btn_modal_close = UIButton((BASE_WIDTH // 2 + 110, 565, 160, 44), "BACK", self._close_modal, color_scheme="sand")
 
     def _open_auth_modal(self) -> None:
         prof = self.auth.get_current_profile()
@@ -270,7 +271,12 @@ class RetroReviveHub:
             self.selected_game_for_modal = None
             self.launch_game(gid)
 
-    def launch_game(self, game_id: str) -> None:
+    def _launch_modal_governor(self) -> None:
+        if self.selected_game_for_modal and self.selected_game_for_modal.game_id == "hammurabi":
+            self.selected_game_for_modal = None
+            self.launch_game("hammurabi", screen="governor")
+
+    def launch_game(self, game_id: str, screen: Optional[str] = None) -> None:
         """Launches the selected game subapp cleanly using the shared display window."""
         SoundSynthesizer.play("fanfare")
 
@@ -280,6 +286,8 @@ class RetroReviveHub:
                 on_exit_to_library=self._return_to_hub,
                 auth=self.auth,
             )
+            if screen == "governor":
+                self.active_subapp._open_governor_screen()
         elif game_id == "23_matches":
             self.active_subapp = matches_app.MatchesApp(
                 shared_window=self.window,
@@ -335,6 +343,8 @@ class RetroReviveHub:
                     return
             if self.selected_game_for_modal.is_playable and self.btn_modal_launch.handle_event(event, canvas_mouse):
                 return
+            if self.selected_game_for_modal.game_id == "hammurabi" and hasattr(self, "btn_modal_governor") and self.btn_modal_governor.handle_event(event, canvas_mouse):
+                return
             if self.btn_modal_close.handle_event(event, canvas_mouse):
                 return
             return
@@ -380,6 +390,8 @@ class RetroReviveHub:
                 self.launch_game("hammurabi")
             elif event.key in (pygame.K_2, pygame.K_KP2):
                 self.launch_game("23_matches")
+            elif event.key in (pygame.K_3, pygame.K_KP3):
+                self.launch_game("hammurabi", screen="governor")
             elif event.key == pygame.K_s:
                 self.is_search_active = True
             elif event.key == pygame.K_LEFT:
@@ -478,7 +490,7 @@ class RetroReviveHub:
         pygame.draw.rect(self.canvas, (18, 14, 12), bot_rect)
         pygame.draw.line(self.canvas, Palette.PANEL_BORDER, (0, BASE_HEIGHT - 38), (BASE_WIDTH, BASE_HEIGHT - 38), 1)
 
-        shortcuts = "[1] Quick-Launch Hammurabi  |  [2] Quick-Launch 23 Matches  |  [←/→] Select Card  |  [Enter] Play  |  [D] Details  |  [Esc] Quit"
+        shortcuts = "[1] Hammurabi  |  [2] 23 Matches  |  [3] AI Royal Governor  |  [←/→] Select Card  |  [Enter] Play  |  [D] Details  |  [Esc] Quit"
         sc_surf = FontManager.small(12).render(shortcuts, True, Palette.TEXT_MUTED)
         self.canvas.blit(sc_surf, sc_surf.get_rect(center=(BASE_WIDTH // 2, BASE_HEIGHT - 19)))
 
@@ -580,6 +592,8 @@ class RetroReviveHub:
         if g.is_playable:
             self.btn_modal_launch.is_enabled = True
             self.btn_modal_launch.draw(self.canvas)
+            if g.game_id == "hammurabi" and hasattr(self, "btn_modal_governor"):
+                self.btn_modal_governor.draw(self.canvas)
         else:
             self.btn_modal_launch.is_enabled = False
 

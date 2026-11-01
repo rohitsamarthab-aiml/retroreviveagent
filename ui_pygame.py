@@ -280,6 +280,7 @@ class GameApp:
     def _open_governor_screen(self) -> None:
         self.active_modal = None
         self.active_toast = None
+        self._governor_entry_screen = self.current_screen
         # Synchronize game state with Royal Governor
         if self.enhanced_state is None:
             if self.classic_state is not None:
@@ -287,6 +288,8 @@ class GameApp:
             else:
                 self.enhanced_state = init_enhanced_game(mode="ENHANCED")
         self.royal_governor.current_enhanced_state = self.enhanced_state
+        if hasattr(self, "governor_dashboard"):
+            self.governor_dashboard.governor = self.royal_governor
         self.current_screen = "ROYAL_GOVERNOR"
         SoundSynthesizer.play("chime")
 
@@ -295,12 +298,16 @@ class GameApp:
         self.enhanced_state = self.royal_governor.current_enhanced_state
         self.classic_state = self.enhanced_state.classic_state
         self._reset_turn_inputs_for_new_turn()
-        if self.active_mode in ("CLASSIC", "ENHANCED", "SCENARIOS") and not self.classic_state.is_over:
+        if getattr(self, "_governor_entry_screen", None) == "MAIN_MENU":
+            self.current_screen = "MAIN_MENU"
+            self._init_menu_buttons()
+        elif self.active_mode in ("CLASSIC", "ENHANCED", "SCENARIOS") and not self.classic_state.is_over:
             self.current_screen = "GAMEPLAY"
         elif self.classic_state.is_over:
             self._on_term_completed()
         else:
             self.current_screen = "MAIN_MENU"
+            self._init_menu_buttons()
 
     def _open_military_screen(self) -> None:
         self.active_modal = None

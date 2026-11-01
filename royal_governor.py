@@ -621,7 +621,11 @@ class RoyalGovernor:
     def backend_display_name(self) -> str:
         if self._backend == "GEMINI_LLM":
             return "Google Gemini (LLM Function Calling)"
-        return "Deterministic Rule-Based Planner" 
+        return "Deterministic Rule-Based Planner"
+
+    @property
+    def is_delegating(self) -> bool:
+        return self.status in (AgentStatus.DELEGATED, AgentStatus.EXECUTING, AgentStatus.PLANNING)
 
     def on_turn_complete(
         self,

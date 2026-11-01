@@ -570,7 +570,11 @@ def launch() -> None:
     choice = menu.run()
 
     root   = Path(__file__).parent
-    python = sys.executable
+    venv_py = root / ".venv" / "Scripts" / "python.exe"
+    if venv_py.exists():
+        python = str(venv_py)
+    else:
+        python = sys.executable
 
     if choice == "play":
         subprocess.Popen([python, str(root / "main.py")])

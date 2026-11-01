@@ -247,16 +247,23 @@ class RoyalGovernorDashboard:
 
     def update(self, dt: float) -> None:
         for btn in self.goal_buttons:
-            btn.update(dt)
+            if hasattr(btn, "update"):
+                btn.update(dt)
         for btn in self.tab_buttons:
-            btn.update(dt)
-        self.btn_turns_minus.update(dt)
-        self.btn_turns_plus.update(dt)
-        self.btn_step_turn.update(dt)
-        self.btn_run_all.update(dt)
-        self.btn_revoke.update(dt)
-        self.btn_return.update(dt)
-        self.custom_mandate_input.update(dt)
+            if hasattr(btn, "update"):
+                btn.update(dt)
+        for b in [
+            self.btn_turns_minus,
+            self.btn_turns_plus,
+            self.btn_step_turn,
+            self.btn_run_all,
+            self.btn_revoke,
+            self.btn_return,
+        ]:
+            if hasattr(b, "update"):
+                b.update(dt)
+        if hasattr(self, "custom_mandate_input") and hasattr(self.custom_mandate_input, "update"):
+            self.custom_mandate_input.update(dt)
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill(Palette.SAPPHIRE_DARK)

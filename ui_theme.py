@@ -53,6 +53,7 @@ class Palette:
     GOLD_BASE = (212, 175, 55)
     GOLD_LIGHT = (242, 210, 105)
     GOLD_PALE = (255, 242, 185)
+    GOLD_METALLIC = (235, 198, 71)
     TURQUOISE_ACCENT = (38, 185, 205)
 
     # Agriculture & Nature
@@ -141,6 +142,14 @@ class FontManager:
         f = cls.get_font(size, bold=False, serif=True)
         f.set_italic(True)
         return f
+
+    @classmethod
+    def bold(cls, size: int = 14) -> pygame.font.Font:
+        return cls.get_font(size, bold=True, serif=False)
+
+    @classmethod
+    def regular(cls, size: int = 14) -> pygame.font.Font:
+        return cls.get_font(size, bold=False, serif=False)
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +260,10 @@ class UIButton:
         self.is_pressed = False
         self.is_focused = False
         self.is_enabled = True
+
+    def update(self, dt: float = 0.0) -> None:
+        """Frame update hook for animations/timing compatibility."""
+        pass
 
     def trigger(self) -> bool:
         """Executes callback programmatically via keyboard or script."""
